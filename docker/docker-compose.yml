@@ -1,0 +1,196 @@
+# Combined docker-compose for all catalog services
+# Use this to run all services together for integration testing
+#
+# Usage:
+#   docker compose -f docker/docker-compose.yml up -d
+#   docker compose -f docker/docker-compose.yml down -v
+#
+version: '3.8'
+
+services:
+  # ============================================================================
+  # Hive 2.x Metastore
+  # ============================================================================
+  postgres-hive2:
+    image: postgres:15
+    container_name: postgres-hive2
+    environment:
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+      POSTGRES_DB: metastore_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - hive2-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hive -d metastore_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - catalog-network
+
+  hive2-metastore:
+    image: apache/hive:2.3.9
+    container_name: hive2-metastore
+    depends_on:
+      postgres-hive2:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres-hive2:5432/metastore_db
+        -Djavax.jdo.option.ConnectionUserName=hive
+        -Djavax.jdo.option.ConnectionPassword=hive
+    ports:
+      - "9083:9083"
+    volumes:
+      - hive2-warehouse:/opt/hive/data/warehouse
+      - ./hive2/postgresql-42.7.3.jar:/opt/hive/lib/postgres.jar
+    networks:
+      - catalog-network
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/localhost/9083"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ============================================================================
+  # Hive 3.x/4.x Metastore
+  # ============================================================================
+  postgres-hive3:
+    image: postgres:15
+    container_name: postgres-hive3
+    environment:
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+      POSTGRES_DB: metastore_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - hive3-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hive -d metastore_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - catalog-network
+
+  hive3-metastore:
+    image: apache/hive:4.0.0
+    container_name: hive3-metastore
+    depends_on:
+      postgres-hive3:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres-hive3:5432/metastore_db
+        -Djavax.jdo.option.ConnectionUserName=hive
+        -Djavax.jdo.option.ConnectionPassword=hive
+    ports:
+      - "9084:9083"
+      - "9001:9001"
+    volumes:
+      - hive3-warehouse:/opt/hive/data/warehouse
+      - ./hive3/postgresql-42.7.3.jar:/opt/hive/lib/postgres.jar
+    networks:
+      - catalog-network
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/localhost/9083"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ============================================================================
+  # Apache Polaris
+  # ============================================================================
+  postgres-polaris:
+    image: postgres:16
+    container_name: postgres-polaris
+    environment:
+      POSTGRES_USER: polaris
+      POSTGRES_PASSWORD: polaris
+      POSTGRES_DB: polaris
+    ports:
+      - "5434:5432"
+    volumes:
+      - polaris-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U polaris -d polaris"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - catalog-network
+
+  polaris:
+    image: apache/polaris:latest
+    container_name: polaris
+    depends_on:
+      postgres-polaris:
+        condition: service_healthy
+    environment:
+      POLARIS_BOOTSTRAP_CREDENTIALS: "POLARIS,root,s3cr3t"
+      POLARIS_PERSISTENCE_TYPE: relational-jdbc
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres-polaris:5432/polaris
+      QUARKUS_DATASOURCE_USERNAME: polaris
+      QUARKUS_DATASOURCE_PASSWORD: polaris
+      POLARIS_FEATURES_DEFAULTS_OVERRIDE_ALLOW_INSECURE_STORAGE_TYPES: "true"
+      POLARIS_FEATURES_DEFAULTS_OVERRIDE_SUPPORTED_CATALOG_STORAGE_TYPES: '["FILE","S3","GCS","AZURE"]'
+      QUARKUS_OTEL_SDK_DISABLED: "true"
+    ports:
+      - "8181:8181"
+      - "8182:8182"
+    volumes:
+      - polaris-warehouse:/data/warehouse
+    networks:
+      - catalog-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8182/q/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ============================================================================
+  # Unity Catalog
+  # ============================================================================
+  unity-catalog:
+    image: unitycatalog/unitycatalog:latest
+    container_name: unity-catalog
+    environment:
+      UC_SERVER_AUTHORIZATION: "disable"
+    ports:
+      - "8080:8080"
+    volumes:
+      - unity-data:/opt/unitycatalog/etc/data
+      - ./unity/server.properties:/opt/unitycatalog/etc/conf/server.properties:ro
+    networks:
+      - catalog-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/2.1/unity-catalog/catalogs"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  hive2-postgres-data:
+  hive2-warehouse:
+  hive3-postgres-data:
+  hive3-warehouse:
+  polaris-postgres-data:
+  polaris-warehouse:
+  unity-data:
+
+networks:
+  catalog-network:
+    driver: bridge

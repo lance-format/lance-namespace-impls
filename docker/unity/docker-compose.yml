@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  unity-catalog:
+    image: unitycatalog/unitycatalog:latest
+    container_name: unity-catalog
+    environment:
+      # Disable authorization for testing
+      UC_SERVER_AUTHORIZATION: "disable"
+    ports:
+      - "8080:8080"
+    volumes:
+      - unity-data:/opt/unitycatalog/etc/data
+      - ./server.properties:/opt/unitycatalog/etc/conf/server.properties:ro
+    networks:
+      - unity-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/2.1/unity-catalog/catalogs"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  unity-data:
+
+networks:
+  unity-network:
+    driver: bridge

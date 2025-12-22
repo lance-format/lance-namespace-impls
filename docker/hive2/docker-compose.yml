@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  postgres-hive2:
+    image: postgres:15
+    container_name: postgres-hive2
+    environment:
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+      POSTGRES_DB: metastore_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - hive2-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hive -d metastore_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hive2-network
+
+  hive2-metastore:
+    image: apache/hive:2.3.9
+    container_name: hive2-metastore
+    depends_on:
+      postgres-hive2:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres-hive2:5432/metastore_db
+        -Djavax.jdo.option.ConnectionUserName=hive
+        -Djavax.jdo.option.ConnectionPassword=hive
+    ports:
+      - "9083:9083"
+    volumes:
+      - hive2-warehouse:/opt/hive/data/warehouse
+      - ./postgresql-42.7.3.jar:/opt/hive/lib/postgres.jar
+    networks:
+      - hive2-network
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/localhost/9083"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  hive2-postgres-data:
+  hive2-warehouse:
+
+networks:
+  hive2-network:
+    driver: bridge

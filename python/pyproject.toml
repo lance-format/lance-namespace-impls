@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lance-namespace-impls"
+version = "0.0.1"
+description = "Third-party catalog implementations for Lance Namespace"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+
+dependencies = [
+    "pylance>=0.26.0",
+    "lance-namespace-urllib3-client>=0.0.21",
+    "pyarrow>=15.0.0",
+    "typing-extensions>=4.5.0",
+]
+
+[project.optional-dependencies]
+glue = [
+    "boto3>=1.35.0",
+    "botocore>=1.35.0",
+]
+hive2 = [
+    "thrift>=0.13.0",
+    "hive-metastore-client>=1.0.0",
+]
+unity = []
+all = [
+    "boto3>=1.35.0",
+    "botocore>=1.35.0",
+    "thrift>=0.13.0",
+    "hive-metastore-client>=1.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lance_namespace_impls"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/lance_namespace_impls",
+    "tests",
+    "README.md",
+    "pyproject.toml",
+]

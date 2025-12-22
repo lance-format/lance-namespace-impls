@@ -1,0 +1,96 @@
+name: Unity Catalog Integration Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'java/lance-namespace-unity/**'
+      - 'docker/unity/**'
+      - 'docker/docker-compose.yml'
+      - '.github/workflows/integration-unity.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'java/lance-namespace-unity/**'
+      - 'docker/unity/**'
+      - 'docker/docker-compose.yml'
+      - '.github/workflows/integration-unity.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Start Unity Catalog
+        run: |
+          docker compose -f docker/unity/docker-compose.yml up -d
+          echo "Waiting for services to start..."
+
+      - name: Wait for Unity Catalog to be ready
+        run: |
+          echo "Waiting for Unity Catalog to be ready..."
+          timeout 120 bash -c '
+            until curl -sf http://localhost:8080/api/2.1/unity-catalog/catalogs > /dev/null 2>&1; do
+              echo "Waiting for Unity Catalog API..."
+              sleep 5
+            done
+          ' || {
+            echo "Timeout waiting for Unity Catalog"
+            docker compose -f docker/unity/docker-compose.yml logs
+            exit 1
+          }
+          echo "Unity Catalog is ready"
+
+      - name: Create test catalog
+        run: |
+          # Create test catalog
+          curl -s -X POST http://localhost:8080/api/2.1/unity-catalog/catalogs \
+            -H 'Content-Type: application/json' \
+            -d '{"name": "lance_test", "comment": "Test catalog for Lance integration tests"}' \
+            || echo "Catalog may already exist"
+
+          # Verify catalog exists
+          curl -sf http://localhost:8080/api/2.1/unity-catalog/catalogs/lance_test || {
+            echo "Failed to create/verify test catalog"
+            exit 1
+          }
+
+          echo "Test catalog created/verified"
+
+      - name: Run Unity Catalog integration tests
+        working-directory: java
+        run: |
+          ./mvnw test -pl lance-namespace-unity \
+            -Dtest="*IntegrationTest" \
+            -DfailIfNoTests=false \
+            -Dmaven.test.failure.ignore=false
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Docker Compose Status ==="
+          docker compose -f docker/unity/docker-compose.yml ps
+          echo ""
+          echo "=== Unity Catalog Logs ==="
+          docker compose -f docker/unity/docker-compose.yml logs unity-catalog
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose -f docker/unity/docker-compose.yml down -v
