@@ -1,0 +1,101 @@
+name: Hive3 Integration Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'java/lance-namespace-hive3/**'
+      - 'docker/hive3/**'
+      - 'docker/docker-compose.yml'
+      - '.github/workflows/integration-hive3.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'java/lance-namespace-hive3/**'
+      - 'docker/hive3/**'
+      - 'docker/docker-compose.yml'
+      - '.github/workflows/integration-hive3.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Download PostgreSQL JDBC driver
+        run: |
+          mkdir -p docker/hive3
+          curl -sSL -o docker/hive3/postgresql-42.7.3.jar \
+            https://jdbc.postgresql.org/download/postgresql-42.7.3.jar
+
+      - name: Start Hive3 Metastore
+        run: |
+          docker compose -f docker/hive3/docker-compose.yml up -d
+          echo "Waiting for services to start..."
+
+      - name: Wait for Hive3 Metastore to be ready
+        run: |
+          echo "Waiting for Hive3 Metastore to be ready..."
+          timeout 180 bash -c '
+            until docker compose -f docker/hive3/docker-compose.yml ps | grep -q "healthy"; do
+              echo "Waiting for healthy status..."
+              docker compose -f docker/hive3/docker-compose.yml ps
+              sleep 10
+            done
+          ' || {
+            echo "Timeout waiting for Hive3 Metastore"
+            docker compose -f docker/hive3/docker-compose.yml logs
+            exit 1
+          }
+          echo "Hive3 Metastore is ready"
+
+      - name: Verify Hive3 connectivity
+        run: |
+          # Wait a bit more for thrift to be fully ready
+          sleep 10
+          nc -z localhost 9084 || {
+            echo "Cannot connect to Hive3 Metastore on port 9084"
+            docker compose -f docker/hive3/docker-compose.yml logs
+            exit 1
+          }
+          echo "Hive3 Metastore is accepting connections on port 9084"
+
+      - name: Run Hive3 integration tests
+        working-directory: java
+        run: |
+          ./mvnw test -pl lance-namespace-hive3 \
+            -Dtest="*IntegrationTest" \
+            -DfailIfNoTests=false \
+            -Dmaven.test.failure.ignore=false
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Docker Compose Status ==="
+          docker compose -f docker/hive3/docker-compose.yml ps
+          echo ""
+          echo "=== Hive3 Metastore Logs ==="
+          docker compose -f docker/hive3/docker-compose.yml logs hive3-metastore
+          echo ""
+          echo "=== PostgreSQL Logs ==="
+          docker compose -f docker/hive3/docker-compose.yml logs postgres-hive3
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose -f docker/hive3/docker-compose.yml down -v

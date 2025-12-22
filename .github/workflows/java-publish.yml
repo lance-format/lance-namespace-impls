@@ -1,0 +1,155 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Java Publish
+
+on:
+  release:
+    types:
+      - released
+  pull_request:
+    paths:
+      - .github/workflows/java-publish.yml
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry_run: build & package only, release: build & deploy to OSSRH"
+        required: true
+        default: "dry_run"
+        type: choice
+        options:
+          - dry_run
+          - release
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: java
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java sdk
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          server-id: ossrh
+          server-username: SONATYPE_USER
+          server-password: SONATYPE_TOKEN
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Set github
+        run: |
+          git config --global user.name "LanceDB Github Runner"
+          git config --global user.email "dev+gha@lancedb.com"
+
+      - name: Dry run
+        if: github.event_name == 'pull_request'
+        run: |
+          ./mvnw --batch-mode -DskipTests package
+
+      - name: Java Publish
+        if: |
+          (github.event_name == 'release' && github.event.action == 'released') ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')
+        run: |
+          echo "use-agent" >> ~/.gnupg/gpg.conf
+          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
+          export GPG_TTY=$(tty)
+          ./mvnw --batch-mode -DskipTests -DpushChanges=false -Dgpg.passphrase=${{ secrets.GPG_PASSPHRASE }} deploy -P deploy-to-ossrh
+        env:
+          SONATYPE_USER: ${{ secrets.SONATYPE_USER }}
+          SONATYPE_TOKEN: ${{ secrets.SONATYPE_TOKEN }}
+
+      - name: Get published version
+        if: |
+          (github.event_name == 'release' && github.event.action == 'released') ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')
+        id: get_version
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Published version: $VERSION"
+
+      - name: Wait for Maven Central availability
+        if: |
+          (github.event_name == 'release' && github.event.action == 'released') ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          GROUP_ID="org.lance"
+
+          # List of artifacts to check
+          ARTIFACTS=(
+            "lance-namespace-glue"
+            "lance-namespace-hive2"
+            "lance-namespace-hive3"
+            "lance-namespace-unity"
+            "lance-namespace-polaris"
+          )
+
+          echo "Waiting for version $VERSION to be available in Maven Central..."
+          echo "This typically takes 10-30 minutes after publishing to OSSRH."
+
+          # Maximum wait time: 60 minutes
+          MAX_WAIT=3600
+          INTERVAL=60
+          ELAPSED=0
+
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            ALL_AVAILABLE=true
+
+            for ARTIFACT_ID in "${ARTIFACTS[@]}"; do
+              URL="https://repo1.maven.org/maven2/org/lance/${ARTIFACT_ID}/${VERSION}/${ARTIFACT_ID}-${VERSION}.pom"
+
+              if curl --head --silent --fail "$URL" > /dev/null 2>&1; then
+                echo "OK ${ARTIFACT_ID} is available"
+              else
+                echo "X ${ARTIFACT_ID} is not yet available"
+                ALL_AVAILABLE=false
+              fi
+            done
+
+            if [ "$ALL_AVAILABLE" = true ]; then
+              echo ""
+              echo "All artifacts are now available in Maven Central!"
+              echo ""
+              echo "Users can now add the following dependencies to their projects:"
+              echo ""
+              echo "Maven:"
+              echo "<dependency>"
+              echo "  <groupId>org.lance</groupId>"
+              echo "  <artifactId>lance-namespace-glue</artifactId>"
+              echo "  <version>${VERSION}</version>"
+              echo "</dependency>"
+              exit 0
+            fi
+
+            ELAPSED=$((ELAPSED + INTERVAL))
+
+            if [ $ELAPSED -lt $MAX_WAIT ]; then
+              echo ""
+              echo "Artifacts not yet available. Waiting ${INTERVAL} seconds... (${ELAPSED}s elapsed)"
+              sleep $INTERVAL
+            fi
+          done
+
+          echo ""
+          echo "WARNING: Artifacts are not yet available in Maven Central after ${MAX_WAIT} seconds."
+          echo "This is normal - Maven Central sync can take up to 2 hours."
+          echo "The artifacts will appear at: https://central.sonatype.com/artifact/org.lance/lance-namespace-glue/${VERSION}"
+          echo ""
+          echo "You can check the sync status at: https://s01.oss.sonatype.org/"
+          exit 0

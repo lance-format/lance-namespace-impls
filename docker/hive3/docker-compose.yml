@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  postgres-hive3:
+    image: postgres:15
+    container_name: postgres-hive3
+    environment:
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+      POSTGRES_DB: metastore_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - hive3-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hive -d metastore_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hive3-network
+
+  hive3-metastore:
+    image: apache/hive:4.0.0
+    container_name: hive3-metastore
+    depends_on:
+      postgres-hive3:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres-hive3:5432/metastore_db
+        -Djavax.jdo.option.ConnectionUserName=hive
+        -Djavax.jdo.option.ConnectionPassword=hive
+    ports:
+      - "9084:9083"
+      - "9001:9001"
+    volumes:
+      - hive3-warehouse:/opt/hive/data/warehouse
+      - ./postgresql-42.7.3.jar:/opt/hive/lib/postgres.jar
+    networks:
+      - hive3-network
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/localhost/9083"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+volumes:
+  hive3-postgres-data:
+  hive3-warehouse:
+
+networks:
+  hive3-network:
+    driver: bridge

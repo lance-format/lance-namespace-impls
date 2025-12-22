@@ -1,0 +1,168 @@
+# Lance Polaris Namespace Implementation Spec
+
+This document describes how the Polaris Catalog implements the Lance Namespace client spec.
+
+## Background
+
+Apache Polaris is an open-source catalog implementation for Apache Iceberg that provides a REST API for managing tables and namespaces. Polaris supports the Generic Table API which allows registering non-Iceberg table formats. For details on Polaris Catalog, see the [Polaris Catalog Documentation](https://polaris.apache.org).
+
+## Namespace Implementation Configuration Properties
+
+The Lance Polaris namespace implementation accepts the following configuration properties:
+
+The **endpoint** property is required and specifies the Polaris server endpoint URL (e.g., `http://localhost:8181`). Must start with `http://` or `https://`.
+
+The **auth_token** property is optional and specifies the bearer token for authentication.
+
+The **connect_timeout** property is optional and specifies the connection timeout in milliseconds. Default value is `10000` (10 seconds).
+
+The **read_timeout** property is optional and specifies the read timeout in milliseconds. Default value is `30000` (30 seconds).
+
+The **max_retries** property is optional and specifies the maximum number of retries for failed requests. Default value is `3`.
+
+## Object Mapping
+
+### Namespace
+
+The **root namespace** is represented by the Polaris catalog root, accessed via the `/namespaces` endpoint.
+
+A **child namespace** is a nested namespace in Polaris. Polaris supports arbitrary nesting depth, allowing flexible namespace organization. First-level namespaces typically represent catalogs, with subsequent levels representing schemas or other organizational units.
+
+The **namespace identifier** is constructed by joining namespace levels with the `.` delimiter (e.g., `catalog.schema`). When making API calls, the namespace path is URL-encoded.
+
+**Namespace properties** are stored in the namespace's properties map, returned by the Polaris namespace API.
+
+### Table
+
+A **table** is represented as a [Generic Table](https://github.com/polaris-catalog/polaris/blob/main/spec/polaris-catalog-apis/generic-tables-api.yaml) object in Polaris with `format` set to `lance`.
+
+The **table identifier** is constructed by joining the namespace path and table name with the `.` delimiter (e.g., `catalog.schema.table`).
+
+The **table location** is stored in the `base-location` field of the Generic Table, pointing to the root location of the Lance table.
+
+**Table properties** are stored in the Generic Table's `properties` map. An optional `doc` field can store a table description.
+
+## Lance Table Identification
+
+A table in Polaris is identified as a Lance table when it is a Generic Table with `format` set to `lance`. The `base-location` must point to a valid Lance table root directory. The table `properties` should contain `table_type=lance` for consistency with other catalog implementations.
+
+## Basic Operations
+
+### CreateNamespace
+
+Creates a new namespace in Polaris.
+
+The implementation:
+
+1. Parse the namespace identifier to get the namespace path
+2. Construct a CreateNamespaceRequest with the namespace array and properties
+3. POST to `/namespaces` endpoint
+4. Return the created namespace properties
+
+**Error Handling:**
+
+If the namespace already exists, return error code `2` (NamespaceAlreadyExists). If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+
+### ListNamespaces
+
+Lists child namespaces under a given parent namespace.
+
+The implementation:
+
+1. Parse the parent namespace identifier
+2. For root namespace: GET `/namespaces`
+3. For nested namespace: GET `/namespaces/{parent}/namespaces`
+4. Convert the response namespace arrays to dot-separated strings
+
+**Error Handling:**
+
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+
+### DescribeNamespace
+
+Retrieves properties and metadata for a namespace.
+
+The implementation:
+
+1. Parse the namespace identifier
+2. GET `/namespaces/{namespace}` with URL-encoded namespace path
+3. Return the namespace properties
+
+**Error Handling:**
+
+If the namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+
+### DropNamespace
+
+Removes a namespace from Polaris.
+
+The implementation:
+
+1. Parse the namespace identifier
+2. DELETE `/namespaces/{namespace}` with URL-encoded namespace path
+
+**Error Handling:**
+
+If the namespace does not exist, return error code `1` (NamespaceNotFound). If the namespace is not empty, return error code `3` (NamespaceNotEmpty). If the server returns an error, return error code `18` (Internal).
+
+### DeclareTable
+
+Declares a new Lance table in Polaris without creating the underlying data.
+
+The implementation:
+
+1. Parse the table identifier to extract namespace and table name
+2. Construct a CreateGenericTableRequest with:
+    - `name`: the table name
+    - `format`: `lance`
+    - `base-location`: the specified location
+    - `doc`: optional description from properties
+    - `properties`: table properties including `table_type=lance`
+3. POST to `/namespaces/{namespace}/generic-tables`
+4. Return the created table location and properties
+
+**Error Handling:**
+
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the table already exists, return error code `5` (TableAlreadyExists). If the server returns an error, return error code `18` (Internal).
+
+### ListTables
+
+Lists all Lance tables in a namespace.
+
+The implementation:
+
+1. Parse the namespace identifier
+2. GET `/namespaces/{namespace}/generic-tables`
+3. Extract table names from the response identifiers
+
+**Error Handling:**
+
+If the namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+
+### DescribeTable
+
+Retrieves metadata for a Lance table.
+
+The implementation:
+
+1. Parse the table identifier to extract namespace and table name
+2. GET `/namespaces/{namespace}/generic-tables/{table}`
+3. Verify the table format is `lance`
+4. Return the table location, properties, and optional doc as comment
+
+**Error Handling:**
+
+If the table does not exist, return error code `4` (TableNotFound). If the table format is not `lance`, return error code `13` (InvalidInput). If the server returns an error, return error code `18` (Internal).
+
+### DeregisterTable
+
+Removes a Lance table registration from Polaris without deleting the underlying data.
+
+The implementation:
+
+1. Parse the table identifier to extract namespace and table name
+2. DELETE `/namespaces/{namespace}/generic-tables/{table}`
+
+**Error Handling:**
+
+If the table does not exist, return error code `4` (TableNotFound). If the server returns an error, return error code `18` (Internal).

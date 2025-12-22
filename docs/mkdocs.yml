@@ -1,0 +1,84 @@
+site_name: Lance Namespace Implementations
+site_description: Lance namespace implementations for various catalog systems
+site_url: https://lancedb.github.io/lance-namespace-impls/
+docs_dir: src
+
+repo_name: lancedb/lance-namespace-impls
+repo_url: https://github.com/lancedb/lance-namespace-impls
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.instant
+    - navigation.indexes
+    - navigation.tracking
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+nav:
+  - Hive MetaStore V2: hive2.md
+  - Hive MetaStore V3: hive3.md
+  - Iceberg REST Catalog: iceberg.md
+  - Polaris: polaris.md
+  - Unity Catalog: unity.md
+  - AWS Glue: glue.md
+  - Gravitino: gravitino.md
+  - OneLake: onelake.md
+  - Dataproc: dataproc.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/lancedb/lance-namespace-impls
+    - icon: fontawesome/brands/discord
+      link: https://discord.gg/zMM32dvNtd
+    - icon: fontawesome/brands/twitter
+      link: https://twitter.com/lancedb
+
+extra_javascript:
+  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
