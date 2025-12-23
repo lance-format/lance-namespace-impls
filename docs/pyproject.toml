@@ -1,0 +1,10 @@
+[project]
+name = "lance-namespace-impls-docs"
+version = "0.1.0"
+description = "Documentation for Lance Namespace Implementations"
+requires-python = ">=3.9"
+dependencies = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.4.0",
+    "mkdocs-awesome-pages-plugin>=2.10.1",
+]
