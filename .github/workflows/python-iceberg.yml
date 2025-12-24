@@ -10,16 +10,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Java Unity
+name: Python Iceberg
 
 on:
   push:
     branches:
       - main
     paths:
-      - java/lance-namespace-unity/**
-      - java/pom.xml
-      - .github/workflows/java-unity.yml
+      - python/src/lance_namespace_impls/iceberg.py
+      - python/tests/test_iceberg.py
+      - python/pyproject.toml
+      - .github/workflows/python-iceberg.yml
   pull_request:
     types:
       - opened
@@ -27,9 +28,10 @@ on:
       - ready_for_review
       - reopened
     paths:
-      - java/lance-namespace-unity/**
-      - java/pom.xml
-      - .github/workflows/java-unity.yml
+      - python/src/lance_namespace_impls/iceberg.py
+      - python/tests/test_iceberg.py
+      - python/pyproject.toml
+      - .github/workflows/python-iceberg.yml
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -41,22 +43,22 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        java-version: [11, 17]
+        python-version: ["3.10", "3.11", "3.12"]
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          distribution: temurin
-          java-version: ${{ matrix.java-version }}
-          cache: "maven"
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+      - name: Install dependencies
+        working-directory: python
+        run: make install-iceberg
       - name: Lint
-        working-directory: java
-        run: make lint-unity
-      - name: Build
-        working-directory: java
-        run: make build-unity
+        working-directory: python
+        run: make lint-iceberg
       - name: Test
-        working-directory: java
-        run: make test-unity
+        working-directory: python
+        run: make test-iceberg

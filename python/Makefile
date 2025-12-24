@@ -10,33 +10,90 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-.PHONY: install
-install:
-	uv pip install -e ".[all,dev]"
+# ============================================================================
+# Glue
+# ============================================================================
+
+.PHONY: lint-glue
+lint-glue:
+	uv run ruff check src/lance_namespace_impls/glue.py tests/test_glue.py
+	uv run ruff format --check src/lance_namespace_impls/glue.py tests/test_glue.py
 
 .PHONY: install-glue
 install-glue:
-	uv pip install -e ".[glue,dev]"
-
-.PHONY: install-hive2
-install-hive2:
-	uv pip install -e ".[hive2,dev]"
-
-.PHONY: test
-test:
-	uv run pytest tests/
+	uv sync --extra glue --extra dev
 
 .PHONY: test-glue
 test-glue:
 	uv run pytest tests/test_glue.py
 
+# ============================================================================
+# Hive
+# ============================================================================
+
+.PHONY: lint-hive
+lint-hive:
+	uv run ruff check src/lance_namespace_impls/hive.py tests/test_hive.py
+	uv run ruff format --check src/lance_namespace_impls/hive.py tests/test_hive.py
+
+.PHONY: install-hive
+install-hive:
+	uv sync --extra hive2 --extra dev
+
 .PHONY: test-hive
 test-hive:
 	uv run pytest tests/test_hive.py
 
+# ============================================================================
+# Unity
+# ============================================================================
+
+.PHONY: lint-unity
+lint-unity:
+	uv run ruff check src/lance_namespace_impls/unity.py tests/test_unity.py
+	uv run ruff format --check src/lance_namespace_impls/unity.py tests/test_unity.py
+
+.PHONY: install-unity
+install-unity:
+	uv sync --extra unity --extra dev
+
 .PHONY: test-unity
 test-unity:
 	uv run pytest tests/test_unity.py
+
+# ============================================================================
+# Iceberg
+# ============================================================================
+
+.PHONY: lint-iceberg
+lint-iceberg:
+	uv run ruff check src/lance_namespace_impls/iceberg.py
+	uv run ruff format --check src/lance_namespace_impls/iceberg.py
+
+.PHONY: install-iceberg
+install-iceberg:
+	uv sync --extra dev
+
+.PHONY: test-iceberg
+test-iceberg:
+	uv run pytest tests/test_iceberg.py
+
+# ============================================================================
+# All
+# ============================================================================
+
+.PHONY: lint
+lint:
+	uv run ruff check .
+	uv run ruff format --check .
+
+.PHONY: install
+install:
+	uv sync --extra all --extra dev
+
+.PHONY: test
+test:
+	uv run pytest tests/
 
 .PHONY: clean
 clean:
@@ -48,9 +105,29 @@ clean:
 	find . -type f -name "*.pyc" -delete
 
 .PHONY: build
-build: install
+build:
 	uv build
 
 .PHONY: publish
 publish:
 	uv build
+
+# ============================================================================
+# Integration tests
+# ============================================================================
+
+.PHONY: integ-test
+integ-test:
+	uv run pytest tests/ -m integration
+
+.PHONY: integ-test-hive
+integ-test-hive:
+	uv run pytest tests/test_hive.py -m integration
+
+.PHONY: integ-test-polaris
+integ-test-polaris:
+	uv run pytest tests/test_polaris.py -m integration
+
+.PHONY: integ-test-unity
+integ-test-unity:
+	uv run pytest tests/test_unity.py -m integration

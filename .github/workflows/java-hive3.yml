@@ -10,16 +10,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Java Unity
+name: Java Hive3
 
 on:
   push:
     branches:
       - main
     paths:
-      - java/lance-namespace-unity/**
+      - java/lance-namespace-hive3/**
       - java/pom.xml
-      - .github/workflows/java-unity.yml
+      - .github/workflows/java-hive3.yml
   pull_request:
     types:
       - opened
@@ -27,9 +27,9 @@ on:
       - ready_for_review
       - reopened
     paths:
-      - java/lance-namespace-unity/**
+      - java/lance-namespace-hive3/**
       - java/pom.xml
-      - .github/workflows/java-unity.yml
+      - .github/workflows/java-hive3.yml
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -53,10 +53,10 @@ jobs:
           cache: "maven"
       - name: Lint
         working-directory: java
-        run: make lint-unity
+        run: make lint-hive3
       - name: Build
         working-directory: java
-        run: make build-unity
+        run: make build-hive3
       - name: Test
         working-directory: java
-        run: make test-unity
+        run: make test-hive3

@@ -1,20 +1,37 @@
-name: Hive2 Integration Tests
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Python Hive Integration
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
-      - 'java/lance-namespace-hive2/**'
-      - 'docker/hive2/**'
-      - 'docker/docker-compose.yml'
-      - '.github/workflows/integration-hive2.yml'
+      - python/src/lance_namespace_impls/hive.py
+      - python/tests/test_hive.py
+      - docker/hive2/**
+      - .github/workflows/python-integ-hive.yml
   pull_request:
-    branches: [main]
+    types:
+      - opened
+      - synchronize
+      - ready_for_review
+      - reopened
     paths:
-      - 'java/lance-namespace-hive2/**'
-      - 'docker/hive2/**'
-      - 'docker/docker-compose.yml'
-      - '.github/workflows/integration-hive2.yml'
+      - python/src/lance_namespace_impls/hive.py
+      - python/tests/test_hive.py
+      - docker/hive2/**
+      - .github/workflows/python-integ-hive.yml
   workflow_dispatch:
 
 concurrency:
@@ -23,31 +40,21 @@ concurrency:
 
 jobs:
   integration-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: 'maven'
-
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
       - name: Download PostgreSQL JDBC driver
-        run: |
-          mkdir -p docker/hive2
-          curl -sSL -o docker/hive2/postgresql-42.7.3.jar \
-            https://jdbc.postgresql.org/download/postgresql-42.7.3.jar
-
+        run: make docker-setup
       - name: Start Hive2 Metastore
-        run: |
-          docker compose -f docker/hive2/docker-compose.yml up -d
-          echo "Waiting for services to start..."
-
+        run: make docker-up-hive2
       - name: Wait for Hive2 Metastore to be ready
         run: |
           echo "Waiting for Hive2 Metastore to be ready..."
@@ -62,27 +69,18 @@ jobs:
             docker compose -f docker/hive2/docker-compose.yml logs
             exit 1
           }
-          echo "Hive2 Metastore is ready"
-
-      - name: Verify Hive2 connectivity
-        run: |
-          # Wait a bit more for thrift to be fully ready
           sleep 10
           nc -z localhost 9083 || {
             echo "Cannot connect to Hive2 Metastore on port 9083"
             docker compose -f docker/hive2/docker-compose.yml logs
             exit 1
           }
-          echo "Hive2 Metastore is accepting connections on port 9083"
-
-      - name: Run Hive2 integration tests
-        working-directory: java
-        run: |
-          ./mvnw test -pl lance-namespace-hive2 \
-            -Dtest="*IntegrationTest" \
-            -DfailIfNoTests=false \
-            -Dmaven.test.failure.ignore=false
-
+          echo "Hive2 Metastore is ready"
+      - name: Install dependencies
+        working-directory: python
+        run: make install-hive
+      - name: Run integration tests
+        run: make python-integ-test-hive
       - name: Collect logs on failure
         if: failure()
         run: |
@@ -94,8 +92,6 @@ jobs:
           echo ""
           echo "=== PostgreSQL Logs ==="
           docker compose -f docker/hive2/docker-compose.yml logs postgres-hive2
-
       - name: Cleanup
         if: always()
-        run: |
-          docker compose -f docker/hive2/docker-compose.yml down -v
+        run: make docker-down-hive2
