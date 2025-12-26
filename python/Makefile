@@ -79,6 +79,23 @@ test-iceberg:
 	uv run pytest tests/test_iceberg.py
 
 # ============================================================================
+# Polaris
+# ============================================================================
+
+.PHONY: lint-polaris
+lint-polaris:
+	uv run ruff check src/lance_namespace_impls/polaris.py tests/test_polaris.py
+	uv run ruff format --check src/lance_namespace_impls/polaris.py tests/test_polaris.py
+
+.PHONY: install-polaris
+install-polaris:
+	uv sync --extra polaris --extra dev
+
+.PHONY: test-polaris
+test-polaris:
+	uv run pytest tests/test_polaris.py
+
+# ============================================================================
 # All
 # ============================================================================
 

@@ -14,20 +14,24 @@
 package org.lance.namespace.iceberg;
 
 import org.lance.namespace.LanceNamespace;
-import org.lance.namespace.LanceNamespaceException;
-import org.lance.namespace.ObjectIdentifier;
+import org.lance.namespace.errors.InternalException;
+import org.lance.namespace.errors.InvalidInputException;
+import org.lance.namespace.errors.NamespaceAlreadyExistsException;
+import org.lance.namespace.errors.NamespaceNotFoundException;
+import org.lance.namespace.errors.TableAlreadyExistsException;
+import org.lance.namespace.errors.TableNotFoundException;
 import org.lance.namespace.model.CreateEmptyTableRequest;
 import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeregisterTableRequest;
+import org.lance.namespace.model.DeregisterTableResponse;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
 import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 import org.lance.namespace.model.DropNamespaceRequest;
 import org.lance.namespace.model.DropNamespaceResponse;
-import org.lance.namespace.model.DropTableRequest;
-import org.lance.namespace.model.DropTableResponse;
 import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
@@ -35,15 +39,17 @@ import org.lance.namespace.model.ListTablesResponse;
 import org.lance.namespace.model.NamespaceExistsRequest;
 import org.lance.namespace.model.TableExistsRequest;
 import org.lance.namespace.rest.RestClient;
+import org.lance.namespace.rest.RestClientException;
+import org.lance.namespace.util.ObjectIdentifier;
 import org.lance.namespace.util.ValidationUtil;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -51,10 +57,11 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /** Iceberg REST Catalog namespace implementation for Lance. */
-public class IcebergNamespace implements LanceNamespace {
+public class IcebergNamespace implements LanceNamespace, Closeable {
   private static final Logger LOG = LoggerFactory.getLogger(IcebergNamespace.class);
   private static final String TABLE_TYPE_LANCE = "lance";
   private static final String TABLE_TYPE_KEY = "table_type";
@@ -74,19 +81,15 @@ public class IcebergNamespace implements LanceNamespace {
     RestClient.Builder clientBuilder =
         RestClient.builder()
             .baseUrl(config.getFullApiUrl())
-            .connectTimeout(config.getConnectTimeout())
-            .readTimeout(config.getReadTimeout())
+            .connectTimeout(config.getConnectTimeout(), TimeUnit.MILLISECONDS)
+            .readTimeout(config.getReadTimeout(), TimeUnit.MILLISECONDS)
             .maxRetries(config.getMaxRetries());
 
-    Map<String, String> headers = new HashMap<>();
     if (config.getAuthToken() != null) {
-      headers.put("Authorization", "Bearer " + config.getAuthToken());
+      clientBuilder.authToken(config.getAuthToken());
     }
     if (config.getWarehouse() != null) {
-      headers.put("X-Iceberg-Access-Delegation", "vended-credentials");
-    }
-    if (!headers.isEmpty()) {
-      clientBuilder.defaultHeaders(headers);
+      clientBuilder.header("X-Iceberg-Access-Delegation", "vended-credentials");
     }
 
     this.restClient = clientBuilder.build();
@@ -100,12 +103,15 @@ public class IcebergNamespace implements LanceNamespace {
 
   @Override
   public ListNamespacesResponse listNamespaces(ListNamespacesRequest request) {
-    ObjectIdentifier nsId = ObjectIdentifier.of(request.getId());
+    ObjectIdentifier nsId =
+        request.getId() != null
+            ? ObjectIdentifier.of(request.getId())
+            : ObjectIdentifier.of(Collections.emptyList());
 
     try {
       Map<String, String> params = new HashMap<>();
       if (nsId.levels() > 0) {
-        String parent = encodeNamespace(nsId.getIdentifier());
+        String parent = encodeNamespace(nsId.listStyleId());
         params.put("parent", parent);
       }
       if (request.getPageToken() != null) {
@@ -113,7 +119,9 @@ public class IcebergNamespace implements LanceNamespace {
       }
 
       IcebergModels.ListNamespacesResponse response =
-          restClient.get("/namespaces", params, IcebergModels.ListNamespacesResponse.class);
+          params.isEmpty()
+              ? restClient.get("/namespaces", IcebergModels.ListNamespacesResponse.class)
+              : restClient.get("/namespaces", params, IcebergModels.ListNamespacesResponse.class);
 
       List<String> namespaces = new ArrayList<>();
       if (response != null && response.getNamespaces() != null) {
@@ -130,9 +138,8 @@ public class IcebergNamespace implements LanceNamespace {
       ListNamespacesResponse result = new ListNamespacesResponse();
       result.setNamespaces(resultNamespaces);
       return result;
-
-    } catch (IOException e) {
-      throw new LanceNamespaceException(500, "Failed to list namespaces: " + e.getMessage());
+    } catch (RestClientException e) {
+      throw new InternalException("Failed to list namespaces: " + e.getMessage());
     }
   }
 
@@ -144,27 +151,24 @@ public class IcebergNamespace implements LanceNamespace {
     try {
       IcebergModels.CreateNamespaceRequest createRequest =
           new IcebergModels.CreateNamespaceRequest();
-      createRequest.setNamespace(nsId.getIdentifier());
+      createRequest.setNamespace(nsId.listStyleId());
       createRequest.setProperties(request.getProperties());
 
       IcebergModels.CreateNamespaceResponse response =
-          restClient.post("/namespaces", createRequest, IcebergModels.CreateNamespaceResponse.class);
+          restClient.post(
+              "/namespaces", createRequest, IcebergModels.CreateNamespaceResponse.class);
+
+      LOG.info("Created namespace: {}", nsId.stringStyleId());
 
       CreateNamespaceResponse result = new CreateNamespaceResponse();
       result.setProperties(response != null ? response.getProperties() : null);
       return result;
-
-    } catch (RestClient.RestClientException e) {
-      if (e.getStatusCode() == 409) {
-        throw LanceNamespaceException.conflict(
-            "Namespace already exists",
-            "NAMESPACE_EXISTS",
-            request.getId().toString(),
-            e.getResponseBody());
+    } catch (RestClientException e) {
+      if (e.isConflict()) {
+        throw new NamespaceAlreadyExistsException(
+            "Namespace already exists: " + nsId.stringStyleId());
       }
-      throw new LanceNamespaceException(500, "Failed to create namespace: " + e.getMessage());
-    } catch (IOException e) {
-      throw new LanceNamespaceException(500, "Failed to create namespace: " + e.getMessage());
+      throw new InternalException("Failed to create namespace: " + e.getMessage());
     }
   }
 
@@ -174,25 +178,18 @@ public class IcebergNamespace implements LanceNamespace {
     ValidationUtil.checkArgument(nsId.levels() >= 1, "Namespace must have at least one level");
 
     try {
-      String namespacePath = encodeNamespace(nsId.getIdentifier());
+      String namespacePath = encodeNamespace(nsId.listStyleId());
       IcebergModels.GetNamespaceResponse response =
           restClient.get("/namespaces/" + namespacePath, IcebergModels.GetNamespaceResponse.class);
 
       DescribeNamespaceResponse result = new DescribeNamespaceResponse();
       result.setProperties(response != null ? response.getProperties() : null);
       return result;
-
-    } catch (RestClient.RestClientException e) {
-      if (e.getStatusCode() == 404) {
-        throw LanceNamespaceException.notFound(
-            "Namespace not found",
-            "NAMESPACE_NOT_FOUND",
-            request.getId().toString(),
-            e.getResponseBody());
+    } catch (RestClientException e) {
+      if (e.isNotFound()) {
+        throw new NamespaceNotFoundException("Namespace not found: " + nsId.stringStyleId());
       }
-      throw new LanceNamespaceException(500, "Failed to describe namespace: " + e.getMessage());
-    } catch (IOException e) {
-      throw new LanceNamespaceException(500, "Failed to describe namespace: " + e.getMessage());
+      throw new InternalException("Failed to describe namespace: " + e.getMessage());
     }
   }
 
@@ -207,25 +204,15 @@ public class IcebergNamespace implements LanceNamespace {
     ValidationUtil.checkArgument(nsId.levels() >= 1, "Namespace must have at least one level");
 
     try {
-      String namespacePath = encodeNamespace(nsId.getIdentifier());
+      String namespacePath = encodeNamespace(nsId.listStyleId());
       restClient.delete("/namespaces/" + namespacePath);
-
+      LOG.info("Dropped namespace: {}", nsId.stringStyleId());
       return new DropNamespaceResponse();
-
-    } catch (RestClient.RestClientException e) {
-      if (e.getStatusCode() == 404) {
+    } catch (RestClientException e) {
+      if (e.isNotFound()) {
         return new DropNamespaceResponse();
       }
-      if (e.getStatusCode() == 409) {
-        throw LanceNamespaceException.conflict(
-            "Namespace not empty",
-            "NAMESPACE_NOT_EMPTY",
-            request.getId().toString(),
-            e.getResponseBody());
-      }
-      throw new LanceNamespaceException(500, "Failed to drop namespace: " + e.getMessage());
-    } catch (IOException e) {
-      throw new LanceNamespaceException(500, "Failed to drop namespace: " + e.getMessage());
+      throw new InternalException("Failed to drop namespace: " + e.getMessage());
     }
   }
 
@@ -235,22 +222,26 @@ public class IcebergNamespace implements LanceNamespace {
     ValidationUtil.checkArgument(nsId.levels() >= 1, "Namespace must have at least one level");
 
     try {
-      String namespacePath = encodeNamespace(nsId.getIdentifier());
+      String namespacePath = encodeNamespace(nsId.listStyleId());
       Map<String, String> params = new HashMap<>();
       if (request.getPageToken() != null) {
         params.put("pageToken", request.getPageToken());
       }
 
       IcebergModels.ListTablesResponse response =
-          restClient.get(
-              "/namespaces/" + namespacePath + "/tables",
-              params,
-              IcebergModels.ListTablesResponse.class);
+          params.isEmpty()
+              ? restClient.get(
+                  "/namespaces/" + namespacePath + "/tables",
+                  IcebergModels.ListTablesResponse.class)
+              : restClient.get(
+                  "/namespaces/" + namespacePath + "/tables",
+                  params,
+                  IcebergModels.ListTablesResponse.class);
 
       List<String> tables = new ArrayList<>();
       if (response != null && response.getIdentifiers() != null) {
         for (IcebergModels.TableIdentifier tableId : response.getIdentifiers()) {
-          if (isLanceTable(nsId.getIdentifier(), tableId.getName())) {
+          if (isLanceTable(nsId.listStyleId(), tableId.getName())) {
             tables.add(tableId.getName());
           }
         }
@@ -262,9 +253,11 @@ public class IcebergNamespace implements LanceNamespace {
       ListTablesResponse result = new ListTablesResponse();
       result.setTables(resultTables);
       return result;
-
-    } catch (IOException e) {
-      throw new LanceNamespaceException(500, "Failed to list tables: " + e.getMessage());
+    } catch (RestClientException e) {
+      if (e.isNotFound()) {
+        throw new NamespaceNotFoundException("Namespace not found: " + nsId.stringStyleId());
+      }
+      throw new InternalException("Failed to list tables: " + e.getMessage());
     }
   }
 
@@ -274,7 +267,7 @@ public class IcebergNamespace implements LanceNamespace {
     ValidationUtil.checkArgument(
         tableId.levels() >= 2, "Table identifier must have at least namespace and table name");
 
-    List<String> namespace = tableId.getIdentifier().subList(0, tableId.levels() - 1);
+    List<String> namespace = tableId.listStyleId().subList(0, tableId.levels() - 1);
     String tableName = tableId.levelAtListPos(tableId.levels() - 1);
 
     try {
@@ -290,9 +283,6 @@ public class IcebergNamespace implements LanceNamespace {
 
       Map<String, String> properties = new HashMap<>();
       properties.put(TABLE_TYPE_KEY, TABLE_TYPE_LANCE);
-      if (request.getProperties() != null) {
-        properties.putAll(request.getProperties());
-      }
       createRequest.setProperties(properties);
 
       String namespacePath = encodeNamespace(namespace);
@@ -302,31 +292,19 @@ public class IcebergNamespace implements LanceNamespace {
               createRequest,
               IcebergModels.LoadTableResponse.class);
 
+      LOG.info("Created Lance table: {}.{}", namespacePath, tableName);
+
       CreateEmptyTableResponse result = new CreateEmptyTableResponse();
       result.setLocation(tablePath);
-      if (response != null && response.getMetadata() != null) {
-        result.setProperties(response.getMetadata().getProperties());
-      }
       return result;
-
-    } catch (RestClient.RestClientException e) {
-      if (e.getStatusCode() == 409) {
-        throw LanceNamespaceException.conflict(
-            "Table already exists",
-            "TABLE_EXISTS",
-            request.getId().toString(),
-            e.getResponseBody());
+    } catch (RestClientException e) {
+      if (e.isConflict()) {
+        throw new TableAlreadyExistsException("Table already exists: " + tableId.stringStyleId());
       }
-      if (e.getStatusCode() == 404) {
-        throw LanceNamespaceException.notFound(
-            "Namespace not found",
-            "NAMESPACE_NOT_FOUND",
-            String.join(".", namespace),
-            e.getResponseBody());
+      if (e.isNotFound()) {
+        throw new NamespaceNotFoundException("Namespace not found: " + String.join(".", namespace));
       }
-      throw new LanceNamespaceException(500, "Failed to create empty table: " + e.getMessage());
-    } catch (IOException e) {
-      throw new LanceNamespaceException(500, "Failed to create empty table: " + e.getMessage());
+      throw new InternalException("Failed to create table: " + e.getMessage());
     }
   }
 
@@ -336,12 +314,12 @@ public class IcebergNamespace implements LanceNamespace {
     ValidationUtil.checkArgument(
         tableId.levels() >= 2, "Table identifier must have at least namespace and table name");
 
-    List<String> namespace = tableId.getIdentifier().subList(0, tableId.levels() - 1);
+    List<String> namespace = tableId.listStyleId().subList(0, tableId.levels() - 1);
     String tableName = tableId.levelAtListPos(tableId.levels() - 1);
 
     try {
       String namespacePath = encodeNamespace(namespace);
-      String encodedTableName = URLEncoder.encode(tableName, StandardCharsets.UTF_8);
+      String encodedTableName = urlEncode(tableName);
 
       IcebergModels.LoadTableResponse response =
           restClient.get(
@@ -349,32 +327,26 @@ public class IcebergNamespace implements LanceNamespace {
               IcebergModels.LoadTableResponse.class);
 
       if (response == null || response.getMetadata() == null) {
-        throw LanceNamespaceException.notFound(
-            "Table not found", "TABLE_NOT_FOUND", request.getId().toString(), "No metadata");
+        throw new TableNotFoundException("Table not found: " + tableId.stringStyleId());
       }
 
       Map<String, String> props = response.getMetadata().getProperties();
       if (props == null || !TABLE_TYPE_LANCE.equalsIgnoreCase(props.get(TABLE_TYPE_KEY))) {
-        throw LanceNamespaceException.badRequest(
-            "Not a Lance table",
-            "INVALID_TABLE",
-            request.getId().toString(),
-            "Table is not managed by Lance");
+        throw new InvalidInputException(
+            String.format(
+                "Table %s is not a Lance table (missing table_type property)",
+                tableId.stringStyleId()));
       }
 
       DescribeTableResponse result = new DescribeTableResponse();
       result.setLocation(response.getMetadata().getLocation());
-      result.setProperties(props);
+      result.setStorageOptions(props);
       return result;
-
-    } catch (RestClient.RestClientException e) {
-      if (e.getStatusCode() == 404) {
-        throw LanceNamespaceException.notFound(
-            "Table not found", "TABLE_NOT_FOUND", request.getId().toString(), e.getResponseBody());
+    } catch (RestClientException e) {
+      if (e.isNotFound()) {
+        throw new TableNotFoundException("Table not found: " + tableId.stringStyleId());
       }
-      throw new LanceNamespaceException(500, "Failed to describe table: " + e.getMessage());
-    } catch (IOException e) {
-      throw new LanceNamespaceException(500, "Failed to describe table: " + e.getMessage());
+      throw new InternalException("Failed to describe table: " + e.getMessage());
     }
   }
 
@@ -384,49 +356,43 @@ public class IcebergNamespace implements LanceNamespace {
   }
 
   @Override
-  public DropTableResponse dropTable(DropTableRequest request) {
+  public DeregisterTableResponse deregisterTable(DeregisterTableRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
         tableId.levels() >= 2, "Table identifier must have at least namespace and table name");
 
-    List<String> namespace = tableId.getIdentifier().subList(0, tableId.levels() - 1);
+    List<String> namespace = tableId.listStyleId().subList(0, tableId.levels() - 1);
     String tableName = tableId.levelAtListPos(tableId.levels() - 1);
 
     try {
       String namespacePath = encodeNamespace(namespace);
-      String encodedTableName = URLEncoder.encode(tableName, StandardCharsets.UTF_8);
+      String encodedTableName = urlEncode(tableName);
 
-      String tableLocation = null;
-      try {
-        IcebergModels.LoadTableResponse tableResponse =
-            restClient.get(
-                "/namespaces/" + namespacePath + "/tables/" + encodedTableName,
-                IcebergModels.LoadTableResponse.class);
-        if (tableResponse != null && tableResponse.getMetadata() != null) {
-          tableLocation = tableResponse.getMetadata().getLocation();
-        }
-      } catch (RestClient.RestClientException e) {
-        if (e.getStatusCode() == 404) {
-          DropTableResponse result = new DropTableResponse();
-          result.setId(request.getId());
-          return result;
-        }
+      IcebergModels.LoadTableResponse getResponse =
+          restClient.get(
+              "/namespaces/" + namespacePath + "/tables/" + encodedTableName,
+              IcebergModels.LoadTableResponse.class);
+
+      String location = null;
+      if (getResponse != null && getResponse.getMetadata() != null) {
+        location = getResponse.getMetadata().getLocation();
       }
 
-      Map<String, String> params = new HashMap<>();
-      params.put("purgeRequested", "false");
-      restClient.delete("/namespaces/" + namespacePath + "/tables/" + encodedTableName, params);
+      restClient.delete("/namespaces/" + namespacePath + "/tables/" + encodedTableName);
+      LOG.info("Deregistered table: {}.{}", namespacePath, tableName);
 
-      DropTableResponse result = new DropTableResponse();
-      result.setId(request.getId());
-      result.setLocation(tableLocation);
+      DeregisterTableResponse result = new DeregisterTableResponse();
+      result.setLocation(location);
       return result;
-
-    } catch (IOException e) {
-      throw new LanceNamespaceException(500, "Failed to drop table: " + e.getMessage());
+    } catch (RestClientException e) {
+      if (e.isNotFound()) {
+        throw new TableNotFoundException("Table not found: " + tableId.stringStyleId());
+      }
+      throw new InternalException("Failed to deregister table: " + e.getMessage());
     }
   }
 
+  @Override
   public void close() throws IOException {
     if (restClient != null) {
       restClient.close();
@@ -436,15 +402,23 @@ public class IcebergNamespace implements LanceNamespace {
   private String encodeNamespace(List<String> namespace) {
     String joined =
         namespace.stream()
-            .map(s -> URLEncoder.encode(s, StandardCharsets.UTF_8))
+            .map(this::urlEncode)
             .collect(Collectors.joining(String.valueOf(NAMESPACE_SEPARATOR)));
-    return URLEncoder.encode(joined, StandardCharsets.UTF_8);
+    return urlEncode(joined);
+  }
+
+  private String urlEncode(String s) {
+    try {
+      return URLEncoder.encode(s, "UTF-8");
+    } catch (java.io.UnsupportedEncodingException e) {
+      throw new RuntimeException("UTF-8 encoding not supported", e);
+    }
   }
 
   private boolean isLanceTable(List<String> namespace, String tableName) {
     try {
       String namespacePath = encodeNamespace(namespace);
-      String encodedTableName = URLEncoder.encode(tableName, StandardCharsets.UTF_8);
+      String encodedTableName = urlEncode(tableName);
 
       IcebergModels.LoadTableResponse response =
           restClient.get(

@@ -386,8 +386,11 @@ class GlueNamespace(LanceNamespace):
             location = table.get('StorageDescriptor', {}).get('Location')
             if not location:
                 raise RuntimeError(f"Table has no location: {database_name}.{table_name}")
-            
-            return DescribeTableResponse(location=location)
+
+            return DescribeTableResponse(
+                location=location,
+                storage_options=self.config.storage_options
+            )
         except Exception as e:
             error_name = e.__class__.__name__ if hasattr(e, '__class__') else ''
             if error_name == 'EntityNotFoundException':
@@ -397,69 +400,23 @@ class GlueNamespace(LanceNamespace):
             raise RuntimeError(f"Failed to describe table: {e}")
     
     def create_table(self, request: CreateTableRequest, request_data: bytes) -> CreateTableResponse:
-        """Create a table with data from Arrow IPC stream."""
-        database_name, table_name = self._parse_table_identifier(request.id)
-        
-        if not request_data:
-            raise ValueError("Request data (Arrow IPC stream) is required for create_table")
-        
-        # Determine table location
-        if request.location:
-            table_location = request.location
-        else:
-            # Use default location pattern
-            db_response = self.glue.get_database(Name=database_name)
-            db_location = db_response['Database'].get('LocationUri', '')
-            if db_location:
-                table_location = f"{db_location}/{table_name}.lance"
-            else:
-                # Use S3 default location
-                table_location = f"s3://lance-namespace/{database_name}/{table_name}.lance"
-        
-        # Extract table from Arrow IPC stream
-        try:
-            reader = pa.ipc.open_stream(pa.py_buffer(request_data))
-            table = reader.read_all()
-            schema = table.schema
-        except Exception as e:
-            raise ValueError(f"Invalid Arrow IPC stream: {e}")
-        
-        # Write Lance dataset
-        lance.write_dataset(table, table_location, storage_options=self.config.storage_options)
-        
-        # Create Glue table entry
-        table_input = {
-            'Name': table_name,
-            'TableType': EXTERNAL_TABLE,
-            'Parameters': {
-                TABLE_TYPE: LANCE_TABLE_TYPE,
-            },
-            'StorageDescriptor': {
-                'Location': table_location,
-                'Columns': self._convert_pyarrow_schema_to_glue_columns(schema)
-            }
-        }
-        
-        try:
-            self.glue.create_table(
-                DatabaseName=database_name,
-                TableInput=table_input
-            )
-            return CreateTableResponse(location=table_location, version=1)
-        except Exception as e:
-            error_name = e.__class__.__name__ if hasattr(e, '__class__') else ''
-            if error_name == 'AlreadyExistsException':
-                raise RuntimeError(f"Table already exists: {database_name}.{table_name}")
-            raise RuntimeError(f"Failed to create table: {e}")
+        """Create a table with data from Arrow IPC stream.
+
+        This operation is not supported. Use create_empty_table to declare table metadata,
+        then use Lance SDK to create the actual table data.
+        """
+        raise NotImplementedError(
+            "create_table is not supported. Use create_empty_table to declare table metadata, "
+            "then use Lance SDK to create the actual table data."
+        )
     
     def create_empty_table(self, request: CreateEmptyTableRequest) -> CreateEmptyTableResponse:
         """Create an empty table (metadata only) in Glue catalog."""
         database_name, table_name = self._parse_table_identifier(request.id)
         
         # Determine table location
-        if request.location:
-            table_location = request.location
-        else:
+        table_location = getattr(request, 'location', None)
+        if not table_location:
             # Use default location pattern
             db_response = self.glue.get_database(Name=database_name)
             db_location = db_response['Database'].get('LocationUri', '')
@@ -514,43 +471,15 @@ class GlueNamespace(LanceNamespace):
         return CreateEmptyTableResponse(location=table_location)
     
     def drop_table(self, request: DropTableRequest) -> DropTableResponse:
-        """Drop a table - deletes both the Lance dataset and Glue catalog entry."""
-        database_name, table_name = self._parse_table_identifier(request.id)
-        
-        try:
-            # First get the table to find its location
-            response = self.glue.get_table(
-                DatabaseName=database_name,
-                Name=table_name
-            )
-            table = response['Table']
-            
-            # Verify it's a Lance table
-            if not self._is_lance_table(table):
-                raise RuntimeError(f"Table is not a Lance table: {database_name}.{table_name}")
-            
-            # Get the table location
-            location = table.get('StorageDescriptor', {}).get('Location')
-            if not location:
-                raise RuntimeError(f"Table has no location: {database_name}.{table_name}")
-            
-            # Drop the Lance dataset first
-            lance_dataset = lance.dataset(location, storage_options=self.config.storage_options)
-            lance_dataset.delete()
-            
-            # Then remove from Glue catalog
-            self.glue.delete_table(
-                DatabaseName=database_name,
-                Name=table_name
-            )
-            return DropTableResponse()
-        except Exception as e:
-            error_name = e.__class__.__name__ if hasattr(e, '__class__') else ''
-            if error_name == 'EntityNotFoundException':
-                raise RuntimeError(f"Table does not exist: {database_name}.{table_name}")
-            if isinstance(e, RuntimeError):
-                raise
-            raise RuntimeError(f"Failed to drop table: {e}")
+        """Drop a table - deletes both the Lance dataset and Glue catalog entry.
+
+        This operation is not supported. Use deregister_table to remove table metadata,
+        then use Lance SDK to delete the actual table data if needed.
+        """
+        raise NotImplementedError(
+            "drop_table is not supported. Use deregister_table to remove table metadata, "
+            "then use Lance SDK to delete the actual table data if needed."
+        )
     
     def register_table(self, request: RegisterTableRequest) -> RegisterTableResponse:
         """Register an existing Lance table in Glue."""

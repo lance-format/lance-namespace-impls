@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import Mock, MagicMock, patch
 import pyarrow as pa
 
-from lance_namespace.glue import GlueNamespace, GlueNamespaceConfig
+from lance_namespace_impls.glue import GlueNamespace, GlueNamespaceConfig
 from lance_namespace_urllib3_client.models import (
     ListNamespacesRequest,
     CreateNamespaceRequest,
@@ -19,16 +19,13 @@ from lance_namespace_urllib3_client.models import (
     RegisterTableRequest,
     DeregisterTableRequest,
     TableExistsRequest,
-    JsonArrowSchema,
-    JsonArrowField,
-    JsonArrowDataType,
 )
 
 
 @pytest.fixture
 def mock_boto3():
     """Mock boto3 module."""
-    with patch('lance_namespace.glue.boto3') as mock:
+    with patch('lance_namespace_impls.glue.boto3') as mock:
         mock.Session.return_value.client.return_value = MagicMock()
         yield mock
 
@@ -36,7 +33,7 @@ def mock_boto3():
 @pytest.fixture
 def mock_lance():
     """Mock lance module."""
-    with patch('lance_namespace.glue.lance') as mock:
+    with patch('lance_namespace_impls.glue.lance') as mock:
         yield mock
 
 
@@ -102,7 +99,7 @@ class TestGlueNamespace:
     
     def test_initialization_without_boto3(self):
         """Test that initialization fails without boto3."""
-        with patch('lance_namespace.glue.HAS_BOTO3', False):
+        with patch('lance_namespace_impls.glue.HAS_BOTO3', False):
             with pytest.raises(ImportError, match="boto3 is required"):
                 GlueNamespace()
     
@@ -312,124 +309,19 @@ class TestGlueNamespace:
         assert response.tables == ['table1', 'table2']
         glue_namespace.glue.get_tables.assert_called_once_with(DatabaseName='test_db')
     
-    def test_create_table(self, glue_namespace, mock_lance):
-        """Test creating a table."""
-        glue_namespace.glue.get_database.return_value = {
-            'Database': {'LocationUri': 's3://bucket/db'}
-        }
-        
-        schema = JsonArrowSchema(
-            fields=[
-                JsonArrowField(name='id', type=JsonArrowDataType(type='int64'), nullable=False),
-                JsonArrowField(name='name', type=JsonArrowDataType(type='utf8'), nullable=True),
-            ]
-        )
-        
-        request = CreateTableRequest(
-            id=['test_db', 'test_table'],
-            var_schema=schema
-        )
-        
-        # Create mock Arrow IPC stream data
-        arrow_schema = pa.schema([
-            pa.field('id', pa.int64(), nullable=False),
-            pa.field('name', pa.string(), nullable=True),
-        ])
-        table = pa.table({'id': [1, 2], 'name': ['Alice', 'Bob']}, schema=arrow_schema)
-        
-        # Convert to IPC stream bytes
-        with pa.BufferOutputStream() as sink:
-            with pa.ipc.new_stream(sink, arrow_schema) as writer:
-                writer.write_table(table)
-            request_data = sink.getvalue().to_pybytes()
-        
-        response = glue_namespace.create_table(request, request_data)
-        
-        assert response.location == 's3://bucket/db/test_table.lance'
-        assert response.version == 1
-        
-        # Verify Lance dataset was written
-        mock_lance.write_dataset.assert_called_once()
-        
-        # Verify Glue table was created
-        glue_namespace.glue.create_table.assert_called_once()
-        call_args = glue_namespace.glue.create_table.call_args
-        assert call_args[1]['DatabaseName'] == 'test_db'
-        assert call_args[1]['TableInput']['Name'] == 'test_table'
-        assert call_args[1]['TableInput']['Parameters']['table_type'] == 'LANCE'
-    
-    def test_create_table_empty_data(self, glue_namespace, mock_lance):
-        """Test creating a table with empty data."""
-        import pyarrow as pa
-        import io
-        
-        glue_namespace.glue.get_database.return_value = {
-            'Database': {'LocationUri': 's3://bucket/db'}
-        }
-        
-        # Create an empty Arrow table with schema
-        arrow_schema = pa.schema([
-            pa.field('id', pa.int64(), nullable=False),
-            pa.field('name', pa.utf8(), nullable=True),
-        ])
-        # Create empty arrays for each field
-        empty_arrays = [
-            pa.array([], type=pa.int64()),
-            pa.array([], type=pa.utf8())
-        ]
-        empty_table = pa.table(empty_arrays, schema=arrow_schema)
-        
-        # Convert to Arrow IPC stream
-        buffer = io.BytesIO()
-        with pa.ipc.RecordBatchStreamWriter(buffer, arrow_schema) as writer:
-            writer.write_table(empty_table)
-        ipc_data = buffer.getvalue()
-        
-        request = CreateTableRequest(
-            id=['test_db', 'test_table']
-        )
-        
-        # Test with empty IPC stream
-        response = glue_namespace.create_table(request, ipc_data)
-        
-        assert response.location == 's3://bucket/db/test_table.lance'
-        assert response.version == 1
-        
-        # Verify Lance dataset was written with empty table
-        mock_lance.write_dataset.assert_called_once()
-        written_table = mock_lance.write_dataset.call_args[0][0]
-        assert written_table.num_rows == 0
-        assert len(written_table.schema) == 2  # id and name columns
-    
-    def test_drop_table(self, glue_namespace, mock_lance):
-        """Test dropping a table."""
-        # Mock the Glue get_table response
-        glue_namespace.glue.get_table.return_value = {
-            'Table': {
-                'Name': 'test_table',
-                'Parameters': {'table_type': 'LANCE'},
-                'StorageDescriptor': {'Location': 's3://bucket/table.lance'}
-            }
-        }
-        
-        # Mock the Lance dataset
-        mock_dataset = mock_lance.dataset.return_value
-        
+    def test_create_table_not_supported(self, glue_namespace, mock_lance):
+        """Test that create_table raises NotImplementedError."""
+        request = CreateTableRequest(id=['test_db', 'test_table'])
+
+        with pytest.raises(NotImplementedError, match="create_table is not supported"):
+            glue_namespace.create_table(request, b"test_data")
+
+    def test_drop_table_not_supported(self, glue_namespace, mock_lance):
+        """Test that drop_table raises NotImplementedError."""
         request = DropTableRequest(id=['test_db', 'test_table'])
-        response = glue_namespace.drop_table(request)
-        
-        # Verify Lance dataset was deleted first
-        mock_lance.dataset.assert_called_once_with(
-            's3://bucket/table.lance',
-            storage_options={}
-        )
-        mock_dataset.delete.assert_called_once()
-        
-        # Then verify Glue table was deleted
-        glue_namespace.glue.delete_table.assert_called_once_with(
-            DatabaseName='test_db',
-            Name='test_table'
-        )
+
+        with pytest.raises(NotImplementedError, match="drop_table is not supported"):
+            glue_namespace.drop_table(request)
     
     def test_deregister_table(self, glue_namespace, mock_lance):
         """Test deregistering a table (only removes from Glue, keeps Lance dataset)."""

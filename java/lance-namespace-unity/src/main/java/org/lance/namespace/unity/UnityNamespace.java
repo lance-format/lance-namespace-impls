@@ -13,26 +13,25 @@
  */
 package org.lance.namespace.unity;
 
-import com.lancedb.lance.Dataset;
-import com.lancedb.lance.WriteParams;
 import org.lance.namespace.LanceNamespace;
-import org.lance.namespace.LanceNamespaceException;
-import org.lance.namespace.ObjectIdentifier;
+import org.lance.namespace.errors.InternalException;
+import org.lance.namespace.errors.InvalidInputException;
+import org.lance.namespace.errors.NamespaceAlreadyExistsException;
+import org.lance.namespace.errors.NamespaceNotFoundException;
+import org.lance.namespace.errors.TableAlreadyExistsException;
+import org.lance.namespace.errors.TableNotFoundException;
 import org.lance.namespace.model.CreateEmptyTableRequest;
 import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
-import org.lance.namespace.model.CreateTableRequest;
-import org.lance.namespace.model.CreateTableResponse;
+import org.lance.namespace.model.DeregisterTableRequest;
+import org.lance.namespace.model.DeregisterTableResponse;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
 import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 import org.lance.namespace.model.DropNamespaceRequest;
 import org.lance.namespace.model.DropNamespaceResponse;
-import org.lance.namespace.model.DropTableRequest;
-import org.lance.namespace.model.DropTableResponse;
-import org.lance.namespace.model.JsonArrowSchema;
 import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
@@ -40,8 +39,8 @@ import org.lance.namespace.model.ListTablesResponse;
 import org.lance.namespace.model.NamespaceExistsRequest;
 import org.lance.namespace.model.TableExistsRequest;
 import org.lance.namespace.rest.RestClient;
-import org.lance.namespace.util.ArrowIpcUtil;
-import org.lance.namespace.util.JsonArrowSchemaConverter;
+import org.lance.namespace.rest.RestClientException;
+import org.lance.namespace.util.ObjectIdentifier;
 import org.lance.namespace.util.ValidationUtil;
 
 import org.apache.arrow.memory.BufferAllocator;
@@ -52,6 +51,7 @@ import org.apache.arrow.vector.types.pojo.Schema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -60,10 +60,11 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /** Unity Catalog namespace implementation for Lance. */
-public class UnityNamespace implements LanceNamespace {
+public class UnityNamespace implements LanceNamespace, Closeable {
   private static final Logger LOG = LoggerFactory.getLogger(UnityNamespace.class);
   private static final String TABLE_TYPE_LANCE = "lance";
   private static final String TABLE_TYPE_EXTERNAL = "EXTERNAL";
@@ -80,19 +81,15 @@ public class UnityNamespace implements LanceNamespace {
     this.allocator = allocator;
     this.config = new UnityNamespaceConfig(configProperties);
 
-    // Build REST client with authentication if provided
     RestClient.Builder clientBuilder =
         RestClient.builder()
             .baseUrl(config.getFullApiUrl())
-            .connectTimeout(config.getConnectTimeout())
-            .readTimeout(config.getReadTimeout())
+            .connectTimeout(config.getConnectTimeout(), TimeUnit.MILLISECONDS)
+            .readTimeout(config.getReadTimeout(), TimeUnit.MILLISECONDS)
             .maxRetries(config.getMaxRetries());
 
-    // Add auth token if provided
     if (config.getAuthToken() != null) {
-      Map<String, String> headers = new HashMap<>();
-      headers.put("Authorization", "Bearer " + config.getAuthToken());
-      clientBuilder.defaultHeaders(headers);
+      clientBuilder.authToken(config.getAuthToken());
     }
 
     this.restClient = clientBuilder.build();
@@ -110,7 +107,6 @@ public class UnityNamespace implements LanceNamespace {
   public ListNamespacesResponse listNamespaces(ListNamespacesRequest request) {
     ObjectIdentifier nsId = ObjectIdentifier.of(request.getId());
 
-    // Unity supports 3-level namespace: catalog.schema.table
     ValidationUtil.checkArgument(
         nsId.levels() <= 2, "Expect at most 2-level namespace but get %s", nsId);
 
@@ -118,30 +114,24 @@ public class UnityNamespace implements LanceNamespace {
       List<String> namespaces;
 
       if (nsId.levels() == 0) {
-        // Return the configured catalog as the only top-level namespace
         namespaces = Collections.singletonList(config.getCatalog());
       } else if (nsId.levels() == 1) {
-        // List schemas in the catalog
         String catalog = nsId.levelAtListPos(0);
         if (!catalog.equals(config.getCatalog())) {
-          throw LanceNamespaceException.notFound(
-              "Catalog not found",
-              "CATALOG_NOT_FOUND",
-              catalog,
-              "Expected: " + config.getCatalog());
+          throw new NamespaceNotFoundException(
+              "Catalog not found. Expected: " + config.getCatalog());
         }
 
-        Map<String, String> params = new HashMap<>();
-        params.put("catalog_name", catalog);
+        String path = "/schemas?catalog_name=" + catalog;
         if (request.getLimit() != null) {
-          params.put("max_results", request.getLimit().toString());
+          path += "&max_results=" + request.getLimit();
         }
         if (request.getPageToken() != null) {
-          params.put("page_token", request.getPageToken());
+          path += "&page_token=" + request.getPageToken();
         }
 
         UnityModels.ListSchemasResponse response =
-            restClient.get("/schemas", params, UnityModels.ListSchemasResponse.class);
+            restClient.get(path, UnityModels.ListSchemasResponse.class);
 
         if (response != null && response.getSchemas() != null) {
           namespaces =
@@ -162,8 +152,8 @@ public class UnityNamespace implements LanceNamespace {
       response.setNamespaces(resultNamespaces);
       return response;
 
-    } catch (IOException e) {
-      throw new LanceNamespaceException(500, "Failed to list namespaces: " + e.getMessage());
+    } catch (RestClientException e) {
+      throw new InternalException("Failed to list namespaces: " + e.getMessage());
     }
   }
 
@@ -176,11 +166,8 @@ public class UnityNamespace implements LanceNamespace {
     String schema = nsId.levelAtListPos(1);
 
     if (!catalog.equals(config.getCatalog())) {
-      throw LanceNamespaceException.badRequest(
-          "Cannot create namespace in catalog",
-          "INVALID_CATALOG",
-          catalog,
-          "Expected: " + config.getCatalog());
+      throw new InvalidInputException(
+          "Cannot create namespace in catalog. Expected: " + config.getCatalog());
     }
 
     try {
@@ -196,17 +183,12 @@ public class UnityNamespace implements LanceNamespace {
       response.setProperties(schemaInfo.getProperties());
       return response;
 
-    } catch (RestClient.RestClientException e) {
-      if (e.getStatusCode() == 409) {
-        throw LanceNamespaceException.conflict(
-            "Namespace already exists",
-            "NAMESPACE_EXISTS",
-            request.getId().toString(),
-            e.getResponseBody());
+    } catch (RestClientException e) {
+      if (e.isConflict()) {
+        throw new NamespaceAlreadyExistsException(
+            "Namespace already exists: " + request.getId().toString());
       }
-      throw new LanceNamespaceException(500, "Failed to create namespace: " + e.getMessage());
-    } catch (IOException e) {
-      throw new LanceNamespaceException(500, "Failed to create namespace: " + e.getMessage());
+      throw new InternalException("Failed to create namespace: " + e.getMessage());
     }
   }
 
@@ -219,8 +201,8 @@ public class UnityNamespace implements LanceNamespace {
     String schema = nsId.levelAtListPos(1);
 
     if (!catalog.equals(config.getCatalog())) {
-      throw LanceNamespaceException.notFound(
-          "Catalog not found", "CATALOG_NOT_FOUND", catalog, "Expected: " + config.getCatalog());
+      throw new NamespaceNotFoundException(
+          "Catalog not found: " + catalog + ". Expected: " + config.getCatalog());
     }
 
     try {
@@ -232,17 +214,11 @@ public class UnityNamespace implements LanceNamespace {
       response.setProperties(schemaInfo.getProperties());
       return response;
 
-    } catch (RestClient.RestClientException e) {
-      if (e.getStatusCode() == 404) {
-        throw LanceNamespaceException.notFound(
-            "Namespace not found",
-            "NAMESPACE_NOT_FOUND",
-            request.getId().toString(),
-            e.getResponseBody());
+    } catch (RestClientException e) {
+      if (e.isNotFound()) {
+        throw new NamespaceNotFoundException("Namespace not found: " + request.getId().toString());
       }
-      throw new LanceNamespaceException(500, "Failed to describe namespace: " + e.getMessage());
-    } catch (IOException e) {
-      throw new LanceNamespaceException(500, "Failed to describe namespace: " + e.getMessage());
+      throw new InternalException("Failed to describe namespace: " + e.getMessage());
     }
   }
 
@@ -260,34 +236,22 @@ public class UnityNamespace implements LanceNamespace {
     String schema = nsId.levelAtListPos(1);
 
     if (!catalog.equals(config.getCatalog())) {
-      throw LanceNamespaceException.badRequest(
-          "Cannot drop namespace in catalog",
-          "INVALID_CATALOG",
-          catalog,
-          "Expected: " + config.getCatalog());
+      throw new InvalidInputException(
+          "Cannot drop namespace in catalog. Expected: " + config.getCatalog());
     }
 
     try {
       String fullName = catalog + "." + schema;
-      Map<String, String> params = new HashMap<>();
-      if (request.getBehavior() != null
-          && request.getBehavior() == DropNamespaceRequest.BehaviorEnum.CASCADE) {
-        params.put("force", "true");
+      String path = "/schemas/" + fullName;
+
+      restClient.delete(path);
+      return new DropNamespaceResponse();
+
+    } catch (RestClientException e) {
+      if (e.isNotFound()) {
+        return new DropNamespaceResponse();
       }
-
-      restClient.delete("/schemas/" + fullName, params);
-
-      DropNamespaceResponse response = new DropNamespaceResponse();
-      return response;
-
-    } catch (RestClient.RestClientException e) {
-      if (e.getStatusCode() == 404) {
-        DropNamespaceResponse response = new DropNamespaceResponse();
-        return response;
-      }
-      throw new LanceNamespaceException(500, "Failed to drop namespace: " + e.getMessage());
-    } catch (IOException e) {
-      throw new LanceNamespaceException(500, "Failed to drop namespace: " + e.getMessage());
+      throw new InternalException("Failed to drop namespace: " + e.getMessage());
     }
   }
 
@@ -300,27 +264,24 @@ public class UnityNamespace implements LanceNamespace {
     String schema = nsId.levelAtListPos(1);
 
     if (!catalog.equals(config.getCatalog())) {
-      throw LanceNamespaceException.notFound(
-          "Catalog not found", "CATALOG_NOT_FOUND", catalog, "Expected: " + config.getCatalog());
+      throw new NamespaceNotFoundException(
+          "Catalog not found: " + catalog + ". Expected: " + config.getCatalog());
     }
 
     try {
-      Map<String, String> params = new HashMap<>();
-      params.put("catalog_name", catalog);
-      params.put("schema_name", schema);
+      String path = "/tables?catalog_name=" + catalog + "&schema_name=" + schema;
       if (request.getLimit() != null) {
-        params.put("max_results", request.getLimit().toString());
+        path += "&max_results=" + request.getLimit();
       }
       if (request.getPageToken() != null) {
-        params.put("page_token", request.getPageToken());
+        path += "&page_token=" + request.getPageToken();
       }
 
       UnityModels.ListTablesResponse unityResponse =
-          restClient.get("/tables", params, UnityModels.ListTablesResponse.class);
+          restClient.get(path, UnityModels.ListTablesResponse.class);
 
       List<String> tables = Collections.emptyList();
       if (unityResponse != null && unityResponse.getTables() != null) {
-        // Filter only Lance tables
         tables =
             unityResponse.getTables().stream()
                 .filter(this::isLanceTable)
@@ -335,96 +296,8 @@ public class UnityNamespace implements LanceNamespace {
       response.setTables(resultTables);
       return response;
 
-    } catch (IOException e) {
-      throw new LanceNamespaceException(500, "Failed to list tables: " + e.getMessage());
-    }
-  }
-
-  @Override
-  public CreateTableResponse createTable(CreateTableRequest request, byte[] requestData) {
-    // Validate that requestData is a valid Arrow IPC stream
-    ValidationUtil.checkNotNull(
-        requestData, "Request data (Arrow IPC stream) is required for createTable");
-    ValidationUtil.checkArgument(
-        requestData.length > 0, "Request data (Arrow IPC stream) cannot be empty");
-
-    ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
-    ValidationUtil.checkArgument(
-        tableId.levels() == 3, "Expect a 3-level table identifier but get %s", tableId);
-
-    String catalog = tableId.levelAtListPos(0);
-    String schema = tableId.levelAtListPos(1);
-    String table = tableId.levelAtListPos(2);
-
-    if (!catalog.equals(config.getCatalog())) {
-      throw LanceNamespaceException.badRequest(
-          "Cannot create table in catalog",
-          "INVALID_CATALOG",
-          catalog,
-          "Expected: " + config.getCatalog());
-    }
-
-    try {
-      // First create an empty Lance table dataset
-      String tablePath = config.getRoot() + "/" + catalog + "/" + schema + "/" + table;
-      // Extract schema from Arrow IPC stream
-      JsonArrowSchema jsonSchema;
-      try {
-        jsonSchema = ArrowIpcUtil.extractSchemaFromIpc(requestData);
-      } catch (IOException e) {
-        throw LanceNamespaceException.badRequest(
-            "Invalid Arrow IPC stream: " + e.getMessage(),
-            "INVALID_ARROW_IPC",
-            catalog + "." + schema + "." + table,
-            "Failed to extract schema from Arrow IPC stream");
-      }
-      Schema arrowSchema = JsonArrowSchemaConverter.convertToArrowSchema(jsonSchema);
-
-      WriteParams writeParams =
-          new WriteParams.Builder().withMode(WriteParams.WriteMode.CREATE).build();
-
-      Dataset dataset = Dataset.create(allocator, tablePath, arrowSchema, writeParams);
-      dataset.close();
-
-      // Create Unity table metadata
-      UnityModels.CreateTable createTable = new UnityModels.CreateTable();
-      createTable.setName(table);
-      createTable.setCatalogName(catalog);
-      createTable.setSchemaName(schema);
-      createTable.setTableType(TABLE_TYPE_EXTERNAL);
-      // Unity doesn't recognize LANCE format, use TEXT as a generic format for external tables
-      // The actual format is determined by the table_type=lance property
-      createTable.setDataSourceFormat("TEXT");
-      createTable.setColumns(convertArrowSchemaToUnityColumns(arrowSchema));
-      createTable.setStorageLocation(tablePath);
-
-      Map<String, String> properties = new HashMap<>();
-      properties.put(TABLE_TYPE_KEY, TABLE_TYPE_LANCE);
-      if (request.getProperties() != null) {
-        properties.putAll(request.getProperties());
-      }
-      createTable.setProperties(properties);
-
-      UnityModels.TableInfo tableInfo =
-          restClient.post("/tables", createTable, UnityModels.TableInfo.class);
-
-      CreateTableResponse response = new CreateTableResponse();
-      response.setLocation(tablePath);
-      response.setVersion(1L);
-      response.setProperties(tableInfo.getProperties());
-      return response;
-
-    } catch (RestClient.RestClientException e) {
-      if (e.getStatusCode() == 409) {
-        throw LanceNamespaceException.conflict(
-            "Table already exists",
-            "TABLE_EXISTS",
-            request.getId().toString(),
-            e.getResponseBody());
-      }
-      throw new LanceNamespaceException(500, "Failed to create table: " + e.getMessage());
-    } catch (Exception e) {
-      throw new LanceNamespaceException(500, "Failed to create table: " + e.getMessage());
+    } catch (RestClientException e) {
+      throw new InternalException("Failed to list tables: " + e.getMessage());
     }
   }
 
@@ -439,29 +312,23 @@ public class UnityNamespace implements LanceNamespace {
     String table = tableId.levelAtListPos(2);
 
     if (!catalog.equals(config.getCatalog())) {
-      throw LanceNamespaceException.badRequest(
-          "Cannot create empty table in catalog",
-          "INVALID_CATALOG",
-          catalog,
-          "Expected: " + config.getCatalog());
+      throw new InvalidInputException(
+          "Cannot create empty table in catalog. Expected: " + config.getCatalog());
     }
 
     try {
-      // Determine table location
       String tablePath = request.getLocation();
       if (tablePath == null || tablePath.isEmpty()) {
         tablePath = config.getRoot() + "/" + catalog + "/" + schema + "/" + table;
       }
 
-      // Create Unity table metadata without creating Lance dataset
       UnityModels.CreateTable createTable = new UnityModels.CreateTable();
       createTable.setName(table);
       createTable.setCatalogName(catalog);
       createTable.setSchemaName(schema);
       createTable.setTableType(TABLE_TYPE_EXTERNAL);
-      // Unity doesn't recognize LANCE format, use TEXT as a generic format for external tables
       createTable.setDataSourceFormat("TEXT");
-      // For empty table, create minimal schema with just an ID column
+
       List<UnityModels.ColumnInfo> columns = new ArrayList<>();
       UnityModels.ColumnInfo idColumn = new UnityModels.ColumnInfo();
       idColumn.setName("__placeholder_id");
@@ -476,9 +343,6 @@ public class UnityNamespace implements LanceNamespace {
 
       Map<String, String> properties = new HashMap<>();
       properties.put(TABLE_TYPE_KEY, TABLE_TYPE_LANCE);
-      if (request.getProperties() != null) {
-        properties.putAll(request.getProperties());
-      }
       createTable.setProperties(properties);
 
       UnityModels.TableInfo tableInfo =
@@ -486,20 +350,14 @@ public class UnityNamespace implements LanceNamespace {
 
       CreateEmptyTableResponse response = new CreateEmptyTableResponse();
       response.setLocation(tablePath);
-      response.setProperties(tableInfo.getProperties());
       return response;
 
-    } catch (RestClient.RestClientException e) {
-      if (e.getStatusCode() == 409) {
-        throw LanceNamespaceException.conflict(
-            "Table already exists",
-            "TABLE_EXISTS",
-            request.getId().toString(),
-            e.getResponseBody());
+    } catch (RestClientException e) {
+      if (e.isConflict()) {
+        throw new TableAlreadyExistsException(
+            "Table already exists: " + request.getId().toString());
       }
-      throw new LanceNamespaceException(500, "Failed to create empty table: " + e.getMessage());
-    } catch (Exception e) {
-      throw new LanceNamespaceException(500, "Failed to create empty table: " + e.getMessage());
+      throw new InternalException("Failed to create empty table: " + e.getMessage());
     }
   }
 
@@ -514,8 +372,8 @@ public class UnityNamespace implements LanceNamespace {
     String table = tableId.levelAtListPos(2);
 
     if (!catalog.equals(config.getCatalog())) {
-      throw LanceNamespaceException.notFound(
-          "Catalog not found", "CATALOG_NOT_FOUND", catalog, "Expected: " + config.getCatalog());
+      throw new NamespaceNotFoundException(
+          "Catalog not found: " + catalog + ". Expected: " + config.getCatalog());
     }
 
     try {
@@ -524,27 +382,19 @@ public class UnityNamespace implements LanceNamespace {
           restClient.get("/tables/" + fullName, UnityModels.TableInfo.class);
 
       if (!isLanceTable(tableInfo)) {
-        throw LanceNamespaceException.badRequest(
-            "Not a Lance table",
-            "INVALID_TABLE",
-            request.getId().toString(),
-            "Table is not managed by Lance");
+        throw new InvalidInputException("Not a Lance table: " + request.getId().toString());
       }
 
       DescribeTableResponse response = new DescribeTableResponse();
       response.setLocation(tableInfo.getStorageLocation());
-      response.setProperties(tableInfo.getProperties());
-
+      response.setStorageOptions(tableInfo.getProperties());
       return response;
 
-    } catch (RestClient.RestClientException e) {
-      if (e.getStatusCode() == 404) {
-        throw LanceNamespaceException.notFound(
-            "Table not found", "TABLE_NOT_FOUND", request.getId().toString(), e.getResponseBody());
+    } catch (RestClientException e) {
+      if (e.isNotFound()) {
+        throw new TableNotFoundException("Table not found: " + request.getId().toString());
       }
-      throw new LanceNamespaceException(500, "Failed to describe table: " + e.getMessage());
-    } catch (Exception e) {
-      throw new LanceNamespaceException(500, "Failed to describe table: " + e.getMessage());
+      throw new InternalException("Failed to describe table: " + e.getMessage());
     }
   }
 
@@ -554,7 +404,7 @@ public class UnityNamespace implements LanceNamespace {
   }
 
   @Override
-  public DropTableResponse dropTable(DropTableRequest request) {
+  public DeregisterTableResponse deregisterTable(DeregisterTableRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
         tableId.levels() == 3, "Expect a 3-level table identifier but get %s", tableId);
@@ -564,61 +414,35 @@ public class UnityNamespace implements LanceNamespace {
     String table = tableId.levelAtListPos(2);
 
     if (!catalog.equals(config.getCatalog())) {
-      throw LanceNamespaceException.badRequest(
-          "Cannot drop table in catalog",
-          "INVALID_CATALOG",
-          catalog,
-          "Expected: " + config.getCatalog());
+      throw new NamespaceNotFoundException(
+          "Catalog not found: " + catalog + ". Expected: " + config.getCatalog());
     }
 
     try {
       String fullName = catalog + "." + schema + "." + table;
-
-      // First get the table info to check if it's a Lance table
-      UnityModels.TableInfo tableInfo = null;
-      try {
-        tableInfo = restClient.get("/tables/" + fullName, UnityModels.TableInfo.class);
-      } catch (RestClient.RestClientException e) {
-        if (e.getStatusCode() == 404) {
-          DropTableResponse response = new DropTableResponse();
-          response.setId(request.getId());
-          return response;
-        }
-        throw e;
-      }
+      UnityModels.TableInfo tableInfo =
+          restClient.get("/tables/" + fullName, UnityModels.TableInfo.class);
 
       if (!isLanceTable(tableInfo)) {
-        throw LanceNamespaceException.badRequest(
-            "Not a Lance table",
-            "INVALID_TABLE",
-            request.getId().toString(),
-            "Table is not managed by Lance");
+        throw new InvalidInputException("Not a Lance table: " + request.getId().toString());
       }
 
-      // Delete from Unity
+      String location = tableInfo.getStorageLocation();
       restClient.delete("/tables/" + fullName);
 
-      // Delete Lance dataset data
-      try {
-        Dataset.drop(tableInfo.getStorageLocation(), Collections.emptyMap());
-      } catch (Exception e) {
-        // Log warning but continue - Unity metadata already deleted
-        LOG.warn(
-            "Failed to delete Lance dataset at {}: {}",
-            tableInfo.getStorageLocation(),
-            e.getMessage());
-      }
-
-      DropTableResponse response = new DropTableResponse();
-      response.setId(request.getId());
-      response.setLocation(tableInfo.getStorageLocation());
+      DeregisterTableResponse response = new DeregisterTableResponse();
+      response.setLocation(location);
       return response;
 
-    } catch (IOException e) {
-      throw new LanceNamespaceException(500, "Failed to drop table: " + e.getMessage());
+    } catch (RestClientException e) {
+      if (e.isNotFound()) {
+        throw new TableNotFoundException("Table not found: " + request.getId().toString());
+      }
+      throw new InternalException("Failed to deregister table: " + e.getMessage());
     }
   }
 
+  @Override
   public void close() throws IOException {
     if (restClient != null) {
       restClient.close();
@@ -642,13 +466,8 @@ public class UnityNamespace implements LanceNamespace {
       columnInfo.setTypeText(unityType);
       columnInfo.setTypeJson(convertArrowTypeToUnityTypeJson(field.getType()));
       columnInfo.setTypeName(unityType);
-      columnInfo.setTypeScale(null);
-      columnInfo.setTypePrecision(null);
-      columnInfo.setTypeIntervalType(null);
       columnInfo.setPosition(columns.size());
-      columnInfo.setComment(null);
       columnInfo.setNullable(field.isNullable());
-      columnInfo.setPartitionIndex(null);
       columns.add(columnInfo);
     }
     return columns;
@@ -678,7 +497,6 @@ public class UnityNamespace implements LanceNamespace {
     } else if (arrowType instanceof ArrowType.Timestamp) {
       return "TIMESTAMP";
     }
-    // Default fallback
     return "STRING";
   }
 
@@ -706,7 +524,6 @@ public class UnityNamespace implements LanceNamespace {
     } else if (arrowType instanceof ArrowType.Timestamp) {
       return "{\"type\":\"timestamp\"}";
     }
-    // Default fallback
     return "{\"type\":\"string\"}";
   }
 }

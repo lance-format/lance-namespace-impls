@@ -13,8 +13,9 @@
  */
 package org.lance.namespace.hive3;
 
-import org.lance.namespace.LanceNamespaceException;
-import org.lance.namespace.util.CommonUtil;
+import org.lance.namespace.errors.InvalidInputException;
+import org.lance.namespace.errors.NamespaceNotFoundException;
+import org.lance.namespace.errors.ServiceUnavailableException;
 
 import com.google.common.collect.Maps;
 import org.apache.hadoop.hive.metastore.api.Catalog;
@@ -31,10 +32,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 
-import static org.lance.namespace.hive3.Hive3ErrorType.HiveMetaStoreError;
-import static org.lance.namespace.hive3.Hive3ErrorType.InvalidLanceTable;
-import static org.lance.namespace.hive3.Hive3ErrorType.UnknownCatalog;
-
 public class Hive3Util {
   public static Catalog getCatalogOrNull(Hive3ClientPool clientPool, String catalog) {
     try {
@@ -45,8 +42,7 @@ public class Hive3Util {
       if (e instanceof InterruptedException) {
         Thread.currentThread().interrupt();
       }
-      throw LanceNamespaceException.serviceUnavailable(
-          e.getMessage(), HiveMetaStoreError.getType(), "", CommonUtil.formatCurrentStackTrace());
+      throw new ServiceUnavailableException(e.getMessage());
     }
   }
 
@@ -54,11 +50,7 @@ public class Hive3Util {
       Hive3ClientPool clientPool, String catalog) {
     Catalog catalogObj = getCatalogOrNull(clientPool, catalog);
     if (catalogObj == null) {
-      throw LanceNamespaceException.notFound(
-          String.format("Catalog %s doesn't exist", catalog),
-          UnknownCatalog.getType(),
-          "",
-          CommonUtil.formatCurrentStackTrace());
+      throw new NamespaceNotFoundException(String.format("Catalog %s doesn't exist", catalog));
     }
     return catalogObj;
   }
@@ -72,8 +64,7 @@ public class Hive3Util {
       if (e instanceof InterruptedException) {
         Thread.currentThread().interrupt();
       }
-      throw LanceNamespaceException.serviceUnavailable(
-          e.getMessage(), HiveMetaStoreError.getType(), "", CommonUtil.formatCurrentStackTrace());
+      throw new ServiceUnavailableException(e.getMessage());
     }
   }
 
@@ -86,8 +77,7 @@ public class Hive3Util {
       if (e instanceof InterruptedException) {
         Thread.currentThread().interrupt();
       }
-      throw LanceNamespaceException.serviceUnavailable(
-          e.getMessage(), HiveMetaStoreError.getType(), "", CommonUtil.formatCurrentStackTrace());
+      throw new ServiceUnavailableException(e.getMessage());
     }
   }
 
@@ -151,8 +141,7 @@ public class Hive3Util {
       if (e instanceof InterruptedException) {
         Thread.currentThread().interrupt();
       }
-      throw LanceNamespaceException.serviceUnavailable(
-          e.getMessage(), HiveMetaStoreError.getType(), "", CommonUtil.formatCurrentStackTrace());
+      throw new ServiceUnavailableException(e.getMessage());
     }
   }
 
@@ -166,20 +155,16 @@ public class Hive3Util {
       if (e instanceof InterruptedException) {
         Thread.currentThread().interrupt();
       }
-      throw LanceNamespaceException.serviceUnavailable(
-          e.getMessage(), HiveMetaStoreError.getType(), "", CommonUtil.formatCurrentStackTrace());
+      throw new ServiceUnavailableException(e.getMessage());
     }
   }
 
   public static void validateLanceTable(Table table) {
     Map<String, String> params = table.getParameters();
     if (params == null || !"lance".equalsIgnoreCase(params.get("table_type"))) {
-      throw LanceNamespaceException.badRequest(
+      throw new InvalidInputException(
           String.format(
-              "Table %s.%s is not a Lance table", table.getDbName(), table.getTableName()),
-          InvalidLanceTable.getType(),
-          String.format("%s.%s", table.getDbName(), table.getTableName()),
-          CommonUtil.formatCurrentStackTrace());
+              "Table %s.%s is not a Lance table", table.getDbName(), table.getTableName()));
     }
   }
 

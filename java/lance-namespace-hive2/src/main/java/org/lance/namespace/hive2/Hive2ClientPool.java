@@ -13,8 +13,6 @@
  */
 package org.lance.namespace.hive2;
 
-import org.lance.namespace.util.ClientPoolImpl;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.HiveMetaHookLoader;

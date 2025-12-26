@@ -14,28 +14,16 @@
 package org.lance.namespace.unity;
 
 import org.lance.namespace.LanceNamespace;
-import org.lance.namespace.LanceNamespaceException;
+import org.lance.namespace.errors.LanceNamespaceException;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
-import org.lance.namespace.model.CreateTableRequest;
-import org.lance.namespace.model.CreateTableResponse;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
-import org.lance.namespace.model.DescribeTableRequest;
-import org.lance.namespace.model.DescribeTableResponse;
 import org.lance.namespace.model.DropNamespaceRequest;
 import org.lance.namespace.model.DropNamespaceResponse;
-import org.lance.namespace.model.DropTableRequest;
-import org.lance.namespace.model.DropTableResponse;
-import org.lance.namespace.model.JsonArrowDataType;
-import org.lance.namespace.model.JsonArrowField;
-import org.lance.namespace.model.JsonArrowSchema;
 import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
-import org.lance.namespace.model.ListTablesRequest;
-import org.lance.namespace.model.ListTablesResponse;
 import org.lance.namespace.model.NamespaceExistsRequest;
-import org.lance.namespace.model.TableExistsRequest;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
@@ -50,11 +38,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -153,7 +139,7 @@ public class TestUnityNamespace {
     try {
       DropNamespaceRequest dropRequest = new DropNamespaceRequest();
       dropRequest.setId(Arrays.asList(UNITY_CATALOG, TEST_SCHEMA));
-      dropRequest.setBehavior(DropNamespaceRequest.BehaviorEnum.CASCADE);
+      dropRequest.setBehavior("Cascade");
       namespace.dropNamespace(dropRequest);
     } catch (Exception e) {
       // Ignore cleanup errors
@@ -240,90 +226,6 @@ public class TestUnityNamespace {
       fail("Expected exception for duplicate schema");
     } catch (LanceNamespaceException e) {
       assertTrue(e.getMessage().contains("already exists"));
-    }
-  }
-
-  @Test
-  public void testTableLifecycle() throws IOException {
-    // Create schema first
-    CreateNamespaceRequest createNsRequest = new CreateNamespaceRequest();
-    createNsRequest.setId(Arrays.asList(UNITY_CATALOG, TEST_SCHEMA));
-    namespace.createNamespace(createNsRequest);
-
-    String tableName = "test_table_" + UUID.randomUUID().toString().replace("-", "");
-    List<String> tableId = Arrays.asList(UNITY_CATALOG, TEST_SCHEMA, tableName);
-
-    // Create table
-    CreateTableRequest createTableRequest = new CreateTableRequest();
-    createTableRequest.setId(tableId);
-
-    // Create a simple Arrow schema
-    JsonArrowSchema arrowSchema = new JsonArrowSchema();
-    JsonArrowField field1 = new JsonArrowField();
-    field1.setName("id");
-
-    JsonArrowDataType intType = new JsonArrowDataType();
-    intType.setType("int32");
-    field1.setType(intType);
-    field1.setNullable(false);
-
-    JsonArrowField field2 = new JsonArrowField();
-    field2.setName("name");
-
-    JsonArrowDataType stringType = new JsonArrowDataType();
-    stringType.setType("utf8");
-    field2.setType(stringType);
-    field2.setNullable(true);
-
-    arrowSchema.setFields(Arrays.asList(field1, field2));
-
-    Map<String, String> tableProps = new HashMap<>();
-    tableProps.put("custom_prop", "custom_value");
-    createTableRequest.setProperties(tableProps);
-    // Unity tables are always managed by storage
-
-    // Create proper Arrow IPC stream from the schema
-    byte[] arrowData =
-        org.lance.namespace.util.ArrowIpcUtil.createEmptyArrowIpcStream(arrowSchema);
-    CreateTableResponse createTableResponse = namespace.createTable(createTableRequest, arrowData);
-    assertNotNull(createTableResponse);
-    // Table created successfully - just verify non-null response
-    assertNotNull(createTableResponse.getLocation());
-
-    // Check table exists
-    TableExistsRequest existsRequest = new TableExistsRequest();
-    existsRequest.setId(tableId);
-    namespace.tableExists(existsRequest);
-
-    // List tables
-    ListTablesRequest listRequest = new ListTablesRequest();
-    listRequest.setId(Arrays.asList(UNITY_CATALOG, TEST_SCHEMA));
-    ListTablesResponse listResponse = namespace.listTables(listRequest);
-    assertNotNull(listResponse);
-    assertTrue(listResponse.getTables().contains(tableName));
-
-    // Describe table
-    DescribeTableRequest describeRequest = new DescribeTableRequest();
-    describeRequest.setId(tableId);
-    DescribeTableResponse describeResponse = namespace.describeTable(describeRequest);
-    assertNotNull(describeResponse);
-    assertNotNull(describeResponse.getLocation());
-    assertNotNull(describeResponse.getProperties());
-    assertEquals("storage", describeResponse.getProperties().get("managed_by"));
-
-    // Drop table
-    DropTableRequest dropRequest = new DropTableRequest();
-    dropRequest.setId(tableId);
-    DropTableResponse dropResponse = namespace.dropTable(dropRequest);
-    assertNotNull(dropResponse);
-    assertEquals(tableId, dropResponse.getId());
-
-    // Check table no longer exists - should throw exception
-    try {
-      namespace.tableExists(existsRequest);
-      fail("Expected table not found exception");
-    } catch (LanceNamespaceException e) {
-      assertTrue(e.getMessage().contains("not found"));
     }
   }
 

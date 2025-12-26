@@ -17,7 +17,7 @@ on:
     branches:
       - main
     paths:
-      - python/src/lance_namespace_impls/iceberg.py
+      - python/src/lance_namespace_impls/polaris.py
       - python/tests/test_polaris.py
       - docker/polaris/**
       - .github/workflows/python-integ-polaris.yml
@@ -28,7 +28,7 @@ on:
       - ready_for_review
       - reopened
     paths:
-      - python/src/lance_namespace_impls/iceberg.py
+      - python/src/lance_namespace_impls/polaris.py
       - python/tests/test_polaris.py
       - docker/polaris/**
       - .github/workflows/python-integ-polaris.yml
@@ -93,7 +93,7 @@ jobs:
           echo "Test catalog created/verified"
       - name: Install dependencies
         working-directory: python
-        run: make install-iceberg
+        run: make install-polaris
       - name: Run integration tests
         run: make python-integ-test-polaris
       - name: Collect logs on failure

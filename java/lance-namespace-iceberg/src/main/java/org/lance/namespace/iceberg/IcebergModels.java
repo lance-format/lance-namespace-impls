@@ -429,7 +429,7 @@ public class IcebergModels {
     dummyField.setRequired(false);
     dummyField.setType("string");
 
-    schema.setFields(List.of(dummyField));
+    schema.setFields(java.util.Collections.singletonList(dummyField));
     return schema;
   }
 }

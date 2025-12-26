@@ -24,6 +24,10 @@
       </dependency>
       <dependency>
         <groupId>org.lance</groupId>
+        <artifactId>lance-namespace-core</artifactId>
+      </dependency>
+      <dependency>
+        <groupId>org.lance</groupId>
         <artifactId>lance-namespace-apache-client</artifactId>
       </dependency>
       <dependency>
@@ -71,6 +75,12 @@
         <groupId>org.apache.derby</groupId>
         <artifactId>derby</artifactId>
         <version>10.14.2.0</version>
+        <scope>test</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.lance</groupId>
+        <artifactId>lance-namespace-impls-core</artifactId>
+        <version>${project.version}</version>
         <scope>test</scope>
       </dependency>
       <dependency>

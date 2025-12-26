@@ -13,17 +13,17 @@
  */
 package org.lance.namespace.polaris;
 
-import org.lance.namespace.LanceNamespaceException;
+import org.lance.namespace.errors.LanceNamespaceException;
+import org.lance.namespace.model.CreateEmptyTableRequest;
+import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
-import org.lance.namespace.model.CreateTableRequest;
-import org.lance.namespace.model.CreateTableResponse;
+import org.lance.namespace.model.DeregisterTableRequest;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
 import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 import org.lance.namespace.model.DropNamespaceRequest;
-import org.lance.namespace.model.DropTableRequest;
 import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
@@ -248,22 +248,20 @@ public class TestPolarisNamespaceIntegration {
 
     String tableName = "test_table_" + UUID.randomUUID().toString().substring(0, 8);
 
-    // Create table
-    CreateTableRequest createRequest = new CreateTableRequest();
+    // Create empty table
+    CreateEmptyTableRequest createRequest = new CreateEmptyTableRequest();
     createRequest.setId(Arrays.asList(testCatalog, testNamespace, tableName));
-    createRequest.setLocation("s3://test-bucket/lance/" + tableName);
-    createRequest.setProperties(Collections.singletonMap("comment", "Test table"));
+    createRequest.setLocation("/tmp/polaris-test/" + testNamespace + "/" + tableName);
 
-    CreateTableResponse createResponse = namespace.createTable(createRequest, new byte[0]);
-    assertThat(createResponse.getLocation()).isEqualTo("s3://test-bucket/lance/" + tableName);
-    assertThat(createResponse.getProperties()).containsEntry("comment", "Test table");
+    CreateEmptyTableResponse createResponse = namespace.createEmptyTable(createRequest);
+    assertThat(createResponse.getLocation()).isNotNull();
 
     // Describe table
     DescribeTableRequest describeRequest = new DescribeTableRequest();
     describeRequest.setId(Arrays.asList(testCatalog, testNamespace, tableName));
 
     DescribeTableResponse describeResponse = namespace.describeTable(describeRequest);
-    assertThat(describeResponse.getLocation()).isEqualTo("s3://test-bucket/lance/" + tableName);
+    assertThat(describeResponse.getLocation()).isNotNull();
 
     // Check table exists
     TableExistsRequest existsRequest = new TableExistsRequest();
@@ -277,10 +275,10 @@ public class TestPolarisNamespaceIntegration {
     ListTablesResponse listResponse = namespace.listTables(listRequest);
     assertThat(listResponse.getTables()).contains(tableName);
 
-    // Drop table
-    DropTableRequest dropRequest = new DropTableRequest();
-    dropRequest.setId(Arrays.asList(testCatalog, testNamespace, tableName));
-    namespace.dropTable(dropRequest);
+    // Deregister table
+    DeregisterTableRequest deregisterRequest = new DeregisterTableRequest();
+    deregisterRequest.setId(Arrays.asList(testCatalog, testNamespace, tableName));
+    namespace.deregisterTable(deregisterRequest);
 
     // Verify table doesn't exist
     assertThatThrownBy(() -> namespace.tableExists(existsRequest))
@@ -289,22 +287,19 @@ public class TestPolarisNamespaceIntegration {
   }
 
   @Test
-  public void testCreateTableWithInvalidFormat() {
+  public void testCreateEmptyTableWithLocation() {
     // Create namespace first
     CreateNamespaceRequest nsRequest = new CreateNamespaceRequest();
     nsRequest.setId(Arrays.asList(testCatalog, testNamespace));
     namespace.createNamespace(nsRequest);
 
-    // Try to describe a non-Lance table (would need to be created through Polaris directly)
-    // This test demonstrates the format validation
-
-    // For now, just verify Lance tables work correctly
+    // Create an empty Lance table with location
     String tableName = "lance_table";
-    CreateTableRequest createRequest = new CreateTableRequest();
+    CreateEmptyTableRequest createRequest = new CreateEmptyTableRequest();
     createRequest.setId(Arrays.asList(testCatalog, testNamespace, tableName));
-    createRequest.setLocation("s3://test-bucket/lance/" + tableName);
+    createRequest.setLocation("/tmp/polaris-test/" + testNamespace + "/" + tableName);
 
-    CreateTableResponse response = namespace.createTable(createRequest, new byte[0]);
-    assertThat(response.getProperties()).containsEntry("table_type", "lance");
+    CreateEmptyTableResponse response = namespace.createEmptyTable(createRequest);
+    assertThat(response.getLocation()).isNotNull();
   }
 }

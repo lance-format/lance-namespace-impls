@@ -13,19 +13,19 @@
  */
 package org.lance.namespace.polaris;
 
-import org.lance.namespace.LanceNamespaceException;
+import org.lance.namespace.errors.LanceNamespaceException;
 import org.lance.namespace.model.CreateEmptyTableRequest;
 import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeregisterTableRequest;
+import org.lance.namespace.model.DeregisterTableResponse;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
 import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 import org.lance.namespace.model.DropNamespaceRequest;
 import org.lance.namespace.model.DropNamespaceResponse;
-import org.lance.namespace.model.DropTableRequest;
-import org.lance.namespace.model.DropTableResponse;
 import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
@@ -200,7 +200,7 @@ public class TestPolarisNamespace {
   public void testNamespaceNotExists() throws IOException {
     when(restClient.get(
             eq("/namespaces/test_catalog.schema1"), eq(PolarisModels.NamespaceResponse.class)))
-        .thenThrow(new IOException("404 Not Found"));
+        .thenThrow(new org.lance.namespace.rest.RestClientException(404, "Not Found"));
 
     NamespaceExistsRequest request = new NamespaceExistsRequest();
     request.setId(Arrays.asList("test_catalog", "schema1"));
@@ -234,13 +234,10 @@ public class TestPolarisNamespace {
     CreateEmptyTableRequest request = new CreateEmptyTableRequest();
     request.setId(Arrays.asList("test_catalog", "schema1", "test_table"));
     request.setLocation("s3://bucket/path/to/table");
-    request.setProperties(Collections.singletonMap("comment", "Test table"));
 
     CreateEmptyTableResponse response = namespace.createEmptyTable(request);
 
     assertThat(response.getLocation()).isEqualTo("s3://bucket/path/to/table");
-    assertThat(response.getProperties()).containsEntry("managed_by", "storage");
-    assertThat(response.getProperties()).containsEntry("comment", "Test table");
   }
 
   @Test
@@ -269,8 +266,6 @@ public class TestPolarisNamespace {
     DescribeTableResponse response = namespace.describeTable(request);
 
     assertThat(response.getLocation()).isEqualTo("s3://bucket/path/to/table");
-    assertThat(response.getProperties()).containsEntry("comment", "Test table");
-    assertThat(response.getProperties()).containsEntry("managed_by", "storage");
   }
 
   @Test
@@ -326,13 +321,27 @@ public class TestPolarisNamespace {
   }
 
   @Test
-  public void testDropTable() throws IOException {
-    DropTableRequest request = new DropTableRequest();
+  public void testDeregisterTable() throws IOException {
+    PolarisModels.GenericTable mockTable = new PolarisModels.GenericTable();
+    mockTable.setName("test_table");
+    mockTable.setFormat("lance");
+    mockTable.setBaseLocation("s3://bucket/path/to/table");
+
+    PolarisModels.LoadGenericTableResponse mockResponse =
+        new PolarisModels.LoadGenericTableResponse();
+    mockResponse.setTable(mockTable);
+
+    when(restClient.get(
+            eq("/namespaces/test_catalog.schema1/generic-tables/test_table"),
+            eq(PolarisModels.LoadGenericTableResponse.class)))
+        .thenReturn(mockResponse);
+
+    DeregisterTableRequest request = new DeregisterTableRequest();
     request.setId(Arrays.asList("test_catalog", "schema1", "test_table"));
 
-    DropTableResponse response = namespace.dropTable(request);
+    DeregisterTableResponse response = namespace.deregisterTable(request);
 
+    assertThat(response.getLocation()).isEqualTo("s3://bucket/path/to/table");
     verify(restClient).delete("/namespaces/test_catalog.schema1/generic-tables/test_table");
-    // Response doesn't have getId() method, just verify the delete was called
   }
 }

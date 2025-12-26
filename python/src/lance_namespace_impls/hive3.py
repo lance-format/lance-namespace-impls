@@ -1,60 +1,46 @@
 """
-Lance Hive2 Namespace implementation using Hive Metastore.
+Lance Hive3 Namespace implementation using Hive 3.x Metastore.
 
-This module provides integration with Apache Hive Metastore for managing Lance tables.
-Lance tables are registered as external tables in Hive with specific metadata properties
-to identify them as Lance format.
+This module provides integration with Apache Hive 3.x Metastore for managing Lance tables.
+Hive3 supports a 3-level namespace hierarchy: catalog > database > table.
 
 Installation:
-    pip install 'lance-namespace[hive2]'
+    pip install 'lance-namespace[hive3]'
 
 Usage:
     from lance_namespace import connect
-    
-    # Connect to Hive Metastore
-    namespace = connect("hive2", {
+
+    # Connect to Hive 3.x Metastore
+    namespace = connect("hive3", {
         "uri": "thrift://localhost:9083",
         "root": "/my/dir",  # Or "s3://bucket/prefix"
         "ugi": "user:group1,group2"  # Optional user/group info
     })
-    
-    # List databases
+
+    # List catalogs (root level)
     from lance_namespace import ListNamespacesRequest
     response = namespace.list_namespaces(ListNamespacesRequest())
-    
-    # Create a table
-    from lance_namespace import CreateTableRequest
-    import pyarrow as pa
-    import io
-    
-    data = pa.table({"col1": [1, 2, 3], "col2": ["a", "b", "c"]})
-    buf = io.BytesIO()
-    with pa.ipc.new_stream(buf, data.schema) as writer:
-        writer.write_table(data)
-    
-    request = CreateTableRequest(
-        id=["my_database", "my_table"],
-        mode="create"
-    )
-    response = namespace.create_table(request, buf.getvalue())
-    
-    # Register existing Lance table
+
+    # List databases in a catalog
+    response = namespace.list_namespaces(ListNamespacesRequest(id=["my_catalog"]))
+
+    # Register existing Lance table (3-level: catalog.database.table)
     from lance_namespace import RegisterTableRequest
     request = RegisterTableRequest(
-        id=["my_database", "existing_table"],
+        id=["my_catalog", "my_database", "my_table"],
         location="/path/to/lance/table"
     )
     response = namespace.register_table(request)
 
 Configuration Properties:
     uri (str): Hive Metastore Thrift URI (e.g., "thrift://localhost:9083")
-    root (str): Storage root location of the lakehouse on Hive catalog (default: current working directory)
+    root (str): Storage root location of the lakehouse (default: current working directory)
     ugi (str): Optional User Group Information for authentication (format: "user:group1,group2")
     client.pool-size (int): Size of the HMS client connection pool (default: 3)
-    storage.* (str): Additional storage configurations to access table
+    storage.* (str): Additional storage configurations
 """
 from typing import Dict, List, Optional, Any
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 import os
 import logging
 
@@ -116,37 +102,34 @@ from lance_namespace_urllib3_client.models import (
     DeregisterTableRequest,
     DeregisterTableResponse,
     TableExistsRequest,
-    JsonArrowSchema,
-    JsonArrowField,
-    JsonArrowDataType,
 )
 
 logger = logging.getLogger(__name__)
 
-# Table properties used by Lance (per hive.md specification)
-TABLE_TYPE_KEY = "table_type"  # Case insensitive
-LANCE_TABLE_FORMAT = "lance"  # Case insensitive
-MANAGED_BY_KEY = "managed_by"  # Case insensitive, values: "storage" or "impl"
-VERSION_KEY = "version"  # Numeric version number
+TABLE_TYPE_KEY = "table_type"
+LANCE_TABLE_FORMAT = "lance"
+MANAGED_BY_KEY = "managed_by"
+VERSION_KEY = "version"
 EXTERNAL_TABLE = "EXTERNAL_TABLE"
+DEFAULT_CATALOG = "hive"
 
 
-class HiveMetastoreClient:
-    """Helper class to manage Hive Metastore client connections."""
-    
+class Hive3MetastoreClient:
+    """Helper class to manage Hive 3.x Metastore client connections."""
+
     def __init__(self, uri: str, ugi: Optional[str] = None):
         if not HIVE_AVAILABLE:
             raise ImportError(
                 "Hive dependencies not installed. Please install with: "
-                "pip install 'lance-namespace[hive2]'"
+                "pip install 'lance-namespace[hive3]'"
             )
-        
+
         self._uri = uri
         self._ugi = ugi.split(":") if ugi else None
         self._transport = None
         self._client = None
         self._init_client()
-    
+
     def _init_client(self):
         """Initialize the Thrift client connection."""
         url_parts = urlparse(self._uri)
@@ -154,354 +137,389 @@ class HiveMetastoreClient:
         self._transport = TTransport.TBufferedTransport(socket)
         protocol = TBinaryProtocol.TBinaryProtocol(self._transport)
         self._client = Client(protocol)
-        
+
         if not self._transport.isOpen():
             self._transport.open()
-        
+
         if self._ugi:
             self._client.set_ugi(*self._ugi)
-    
+
     def __enter__(self):
         """Enter context manager."""
         if not self._transport or not self._transport.isOpen():
             self._init_client()
         return self._client
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit context manager."""
         if self._transport and self._transport.isOpen():
             self._transport.close()
-    
+
     def close(self):
         """Close the client connection."""
         if self._transport and self._transport.isOpen():
             self._transport.close()
 
 
-class Hive2Namespace(LanceNamespace):
-    """Lance Hive2 Namespace implementation using Hive Metastore."""
-    
+class Hive3Namespace(LanceNamespace):
+    """Lance Hive3 Namespace implementation using Hive 3.x Metastore.
+
+    Supports 3-level namespace hierarchy: catalog > database > table.
+    """
+
     def __init__(self, **properties):
-        """Initialize the Hive2 namespace.
-        
+        """Initialize the Hive3 namespace.
+
         Args:
             uri: The Hive Metastore URI (e.g., "thrift://localhost:9083")
-            root: Storage root location of the lakehouse on Hive catalog (optional)
-            ugi: User Group Information for authentication (optional, format: "user:group1,group2")
+            root: Storage root location (optional)
+            ugi: User Group Information for authentication (optional)
             client.pool-size: Size of the HMS client connection pool (optional, default: 3)
-            storage.*: Additional storage configurations to access table
+            storage.*: Additional storage configurations
             **properties: Additional configuration properties
         """
         if not HIVE_AVAILABLE:
             raise ImportError(
                 "Hive dependencies not installed. Please install with: "
-                "pip install 'lance-namespace[hive2]'"
+                "pip install 'lance-namespace[hive3]'"
             )
-        
+
         self.uri = properties.get("uri", "thrift://localhost:9083")
         self.ugi = properties.get("ugi")
         self.root = properties.get("root", os.getcwd())
         self.pool_size = int(properties.get("client.pool-size", "3"))
-        # Extract storage properties
         self.storage_properties = {k[8:]: v for k, v in properties.items() if k.startswith("storage.")}
-        
-        # Store properties for pickling support
+
         self._properties = properties.copy()
-        
-        # Lazy initialization to support pickling
         self._client = None
 
     def namespace_id(self) -> str:
         """Return a human-readable unique identifier for this namespace instance."""
-        return f"Hive2Namespace {{ uri: {self.uri!r} }}"
+        return f"Hive3Namespace {{ uri: {self.uri!r} }}"
 
     @property
     def client(self):
         """Get the Hive client, initializing it if necessary."""
         if self._client is None:
-            self._client = HiveMetastoreClient(self.uri, self.ugi)
+            self._client = Hive3MetastoreClient(self.uri, self.ugi)
         return self._client
-    
+
     def _normalize_identifier(self, identifier: List[str]) -> tuple:
-        """Normalize identifier to (database, table) tuple."""
+        """Normalize identifier to (catalog, database, table) tuple."""
         if len(identifier) == 1:
-            return ("default", identifier[0])
+            return (DEFAULT_CATALOG, "default", identifier[0])
         elif len(identifier) == 2:
-            return (identifier[0], identifier[1])
+            return (DEFAULT_CATALOG, identifier[0], identifier[1])
+        elif len(identifier) == 3:
+            return (identifier[0], identifier[1], identifier[2])
         else:
             raise ValueError(f"Invalid identifier: {identifier}")
-    
+
     def _is_root_namespace(self, identifier: Optional[List[str]]) -> bool:
         """Check if the identifier refers to the root namespace."""
         return not identifier or len(identifier) == 0
-    
-    def _get_table_location(self, database: str, table: str) -> str:
+
+    def _get_table_location(self, catalog: str, database: str, table: str) -> str:
         """Get the location for a table."""
-        return os.path.join(self.root, f"{database}.db", table)
-    
+        return os.path.join(self.root, database, f"{table}.lance")
+
     def list_namespaces(self, request: ListNamespacesRequest) -> ListNamespacesResponse:
-        """List all databases in the Hive Metastore."""
+        """List namespaces at the given level.
+
+        - Root level: lists catalogs
+        - Catalog level: lists databases in that catalog
+        """
         try:
-            # Only list namespaces if we're at the root level
-            if not self._is_root_namespace(request.id):
-                # Non-root namespaces don't have children in Hive2
+            ns_id = request.id if request.id else []
+
+            if self._is_root_namespace(ns_id):
+                # List catalogs
+                with self.client as client:
+                    # Try to get catalogs if supported (Hive 3.x)
+                    try:
+                        catalogs = client.get_catalogs().names if hasattr(client, 'get_catalogs') else []
+                    except Exception:
+                        # Fall back to default catalog
+                        catalogs = [DEFAULT_CATALOG]
+                    return ListNamespacesResponse(namespaces=catalogs)
+
+            elif len(ns_id) == 1:
+                # List databases in catalog
+                catalog = ns_id[0].lower()
+                with self.client as client:
+                    try:
+                        databases = client.get_all_databases()
+                    except Exception:
+                        databases = []
+                    # Exclude 'default' database from list
+                    namespaces = [db for db in databases if db != "default"]
+                    return ListNamespacesResponse(namespaces=namespaces)
+
+            else:
+                # 2+ level namespaces don't have children
                 return ListNamespacesResponse(namespaces=[])
-            
-            with self.client as client:
-                databases = client.get_all_databases()
-                # Return just database names as strings (excluding default)
-                namespaces = [db for db in databases if db != "default"]
-                
-                return ListNamespacesResponse(namespaces=namespaces)
+
         except Exception as e:
             logger.error(f"Failed to list namespaces: {e}")
             raise
-    
+
     def describe_namespace(self, request: DescribeNamespaceRequest) -> DescribeNamespaceResponse:
-        """Describe a database in the Hive Metastore."""
+        """Describe a namespace (catalog or database)."""
         try:
-            # Handle root namespace
             if self._is_root_namespace(request.id):
                 properties = {
                     "location": self.root,
-                    "description": "Root namespace (Hive Metastore)"
+                    "description": "Root namespace (Hive 3.x Metastore)"
                 }
                 if self.ugi:
                     properties["ugi"] = self.ugi
                 return DescribeNamespaceResponse(properties=properties)
-            
-            if len(request.id) != 1:
+
+            if len(request.id) == 1:
+                # Describe catalog
+                catalog_name = request.id[0].lower()
+                properties = {
+                    "description": f"Catalog: {catalog_name}",
+                    "catalog.location.uri": os.path.join(self.root, catalog_name)
+                }
+                return DescribeNamespaceResponse(properties=properties)
+
+            elif len(request.id) == 2:
+                # Describe database
+                catalog_name = request.id[0].lower()
+                database_name = request.id[1].lower()
+
+                with self.client as client:
+                    database = client.get_database(database_name)
+
+                    properties = {}
+                    if database.description:
+                        properties["comment"] = database.description
+                    if database.ownerName:
+                        properties["owner"] = database.ownerName
+                    if database.locationUri:
+                        properties["location"] = database.locationUri
+                    if database.parameters:
+                        properties.update(database.parameters)
+
+                    return DescribeNamespaceResponse(properties=properties)
+            else:
                 raise ValueError(f"Invalid namespace identifier: {request.id}")
-            
-            database_name = request.id[0]
-            
-            with self.client as client:
-                database = client.get_database(database_name)
-                
-                properties = {}
-                if database.description:
-                    properties["comment"] = database.description
-                if database.ownerName:
-                    properties["owner"] = database.ownerName
-                if database.locationUri:
-                    properties["location"] = database.locationUri
-                if database.parameters:
-                    properties.update(database.parameters)
-                
-                return DescribeNamespaceResponse(
-                    properties=properties
-                )
+
         except Exception as e:
             if NoSuchObjectException and isinstance(e, NoSuchObjectException):
                 raise ValueError(f"Namespace {request.id} does not exist")
             logger.error(f"Failed to describe namespace {request.id}: {e}")
             raise
-    
+
     def create_namespace(self, request: CreateNamespaceRequest) -> CreateNamespaceResponse:
-        """Create a new database in the Hive Metastore."""
+        """Create a new namespace (catalog or database)."""
         try:
-            # Cannot create root namespace
             if self._is_root_namespace(request.id):
                 raise ValueError("Root namespace already exists")
-            
-            if len(request.id) != 1:
+
+            mode = request.mode.lower() if request.mode else "create"
+
+            if len(request.id) == 1:
+                # Create catalog (Hive 3.x)
+                # Note: Python Hive client may not support catalog creation
+                catalog_name = request.id[0].lower()
+                logger.warning(f"Catalog creation may not be supported: {catalog_name}")
+                return CreateNamespaceResponse()
+
+            elif len(request.id) == 2:
+                # Create database
+                catalog_name = request.id[0].lower()
+                database_name = request.id[1].lower()
+
+                if not HiveDatabase:
+                    raise ImportError("Hive dependencies not available")
+
+                database = HiveDatabase()
+                database.name = database_name
+                database.description = request.properties.get("comment", "") if request.properties else ""
+                database.ownerName = request.properties.get("owner", os.getenv("USER", "")) if request.properties else os.getenv("USER", "")
+                database.locationUri = request.properties.get(
+                    "location",
+                    os.path.join(self.root, database_name)
+                ) if request.properties else os.path.join(self.root, database_name)
+
+                if request.properties:
+                    database.parameters = {
+                        k: v for k, v in request.properties.items()
+                        if k not in ["comment", "owner", "location"]
+                    }
+
+                with self.client as client:
+                    try:
+                        client.create_database(database)
+                    except AlreadyExistsException:
+                        if mode == "create":
+                            raise ValueError(f"Namespace {request.id} already exists")
+                        elif mode in ("exist_ok", "existok"):
+                            pass  # OK to exist
+                        elif mode == "overwrite":
+                            client.drop_database(database_name, deleteData=True, cascade=True)
+                            client.create_database(database)
+
+                return CreateNamespaceResponse()
+            else:
                 raise ValueError(f"Invalid namespace identifier: {request.id}")
-            
-            database_name = request.id[0]
-            
-            # Create database object
-            if not HiveDatabase:
-                raise ImportError("Hive dependencies not available")
-            database = HiveDatabase()
-            database.name = database_name
-            database.description = request.properties.get("comment", "")
-            database.ownerName = request.properties.get("owner", os.getenv("USER", ""))
-            database.locationUri = request.properties.get(
-                "location", 
-                os.path.join(self.root, f"{database_name}.db")
-            )
-            database.parameters = {
-                k: v for k, v in request.properties.items() 
-                if k not in ["comment", "owner", "location"]
-            }
-            
-            with self.client as client:
-                client.create_database(database)
-            
-            return CreateNamespaceResponse()
+
         except Exception as e:
             if AlreadyExistsException and isinstance(e, AlreadyExistsException):
                 raise ValueError(f"Namespace {request.id} already exists")
             logger.error(f"Failed to create namespace {request.id}: {e}")
             raise
-    
+
     def drop_namespace(self, request: DropNamespaceRequest) -> DropNamespaceResponse:
-        """Drop a database from the Hive Metastore."""
+        """Drop a namespace (catalog or database). Only RESTRICT mode is supported."""
         try:
-            # Cannot drop root namespace
             if self._is_root_namespace(request.id):
                 raise ValueError("Cannot drop root namespace")
-            
-            if len(request.id) != 1:
-                raise ValueError(f"Invalid namespace identifier: {request.id}")
-            
-            database_name = request.id[0]
-            
-            with self.client as client:
-                # Check if database is empty
-                tables = client.get_all_tables(database_name)
-                cascade = request.behavior == "CASCADE" if request.behavior else False
-                if tables and not cascade:
-                    raise ValueError(f"Namespace {request.id} is not empty")
-                
+
+            if len(request.id) == 1:
+                # Drop catalog (Hive 3.x)
+                catalog_name = request.id[0].lower()
+                logger.warning(f"Catalog drop may not be supported: {catalog_name}")
+                return DropNamespaceResponse()
+
+            elif len(request.id) == 2:
                 # Drop database
-                client.drop_database(database_name, deleteData=True, cascade=cascade)
-            
-            return DropNamespaceResponse()
+                database_name = request.id[1].lower()
+
+                with self.client as client:
+                    # Check if database is empty (RESTRICT mode only)
+                    tables = client.get_all_tables(database_name)
+                    if tables:
+                        raise ValueError(f"Namespace {request.id} is not empty")
+
+                    client.drop_database(database_name, deleteData=True, cascade=False)
+
+                return DropNamespaceResponse()
+            else:
+                raise ValueError(f"Invalid namespace identifier: {request.id}")
+
         except Exception as e:
             if NoSuchObjectException and isinstance(e, NoSuchObjectException):
                 raise ValueError(f"Namespace {request.id} does not exist")
             logger.error(f"Failed to drop namespace {request.id}: {e}")
             raise
-    
+
     def namespace_exists(self, request: NamespaceExistsRequest) -> None:
-        """Check if a database exists in the Hive Metastore."""
+        """Check if a namespace exists."""
         try:
-            # Root namespace always exists
             if self._is_root_namespace(request.id):
                 return
-            
-            if len(request.id) != 1:
+
+            if len(request.id) == 1:
+                # Check catalog exists
+                # For simplicity, assume standard catalogs exist
+                return
+
+            elif len(request.id) == 2:
+                # Check database exists
+                database_name = request.id[1].lower()
+
+                with self.client as client:
+                    client.get_database(database_name)
+            else:
                 raise ValueError(f"Invalid namespace identifier: {request.id}")
-            
-            database_name = request.id[0]
-            
-            with self.client as client:
-                client.get_database(database_name)
+
         except Exception as e:
             if NoSuchObjectException and isinstance(e, NoSuchObjectException):
                 raise ValueError(f"Namespace {request.id} does not exist")
             logger.error(f"Failed to check namespace existence {request.id}: {e}")
             raise
-    
+
     def list_tables(self, request: ListTablesRequest) -> ListTablesResponse:
         """List tables in a database."""
         try:
-            # Root namespace has no tables
-            if self._is_root_namespace(request.id):
+            if self._is_root_namespace(request.id) or len(request.id) < 2:
                 return ListTablesResponse(tables=[])
-            
-            if len(request.id) != 1:
-                raise ValueError(f"Invalid namespace identifier: {request.id}")
-            
-            database_name = request.id[0]
-            
+
+            catalog_name = request.id[0].lower()
+            database_name = request.id[1].lower()
+
             with self.client as client:
                 table_names = client.get_all_tables(database_name)
-                
-                # Filter for Lance tables if needed
+
+                # Filter for Lance tables
                 tables = []
                 for table_name in table_names:
                     try:
                         table = client.get_table(database_name, table_name)
-                        # Check if it's a Lance table (case insensitive)
                         if table.parameters:
                             table_type = table.parameters.get(TABLE_TYPE_KEY, "").lower()
                             if table_type == LANCE_TABLE_FORMAT:
-                                # Return just table name, not full identifier
                                 tables.append(table_name)
                     except Exception:
-                        # Skip tables we can't read
                         continue
-                
+
                 return ListTablesResponse(tables=tables)
+
         except Exception as e:
             if NoSuchObjectException and isinstance(e, NoSuchObjectException):
                 raise ValueError(f"Namespace {request.id} does not exist")
             logger.error(f"Failed to list tables in namespace {request.id}: {e}")
             raise
-    
+
     def describe_table(self, request: DescribeTableRequest) -> DescribeTableResponse:
-        """Describe a table in the Hive Metastore."""
+        """Describe a table.
+
+        Only load_detailed_metadata=false is supported. Returns location and storage_options only.
+        """
         try:
-            database, table_name = self._normalize_identifier(request.id)
-            
+            catalog, database, table_name = self._normalize_identifier(request.id)
+
             with self.client as client:
                 table = client.get_table(database, table_name)
-                
-                # Check if it's a Lance table (case insensitive)
+
                 if not table.parameters:
                     raise ValueError(f"Table {request.id} is not a Lance table")
                 table_type = table.parameters.get(TABLE_TYPE_KEY, "").lower()
                 if table_type != LANCE_TABLE_FORMAT:
                     raise ValueError(f"Table {request.id} is not a Lance table")
-                
-                # Get table location
+
                 location = table.sd.location if table.sd else None
                 if not location:
                     raise ValueError(f"Table {request.id} has no location")
-                
-                # Build properties from Hive metadata
-                properties = {}
-                if table.parameters:
-                    properties.update(table.parameters)
-                if table.owner:
-                    properties["owner"] = table.owner
-                
-                # Get version from table parameters if available
-                version = None
-                if table.parameters and VERSION_KEY in table.parameters:
-                    try:
-                        version = int(table.parameters[VERSION_KEY])
-                    except (ValueError, TypeError):
-                        pass
-                
-                # Note: We don't load the Lance dataset here, just return Hive metadata
-                # Schema will be None as we're not opening the dataset
+
                 return DescribeTableResponse(
-                    var_schema=None,
                     location=location,
-                    version=version,
-                    properties=properties
+                    storage_options=self.config.storage_options
                 )
+
         except Exception as e:
             if NoSuchObjectException and isinstance(e, NoSuchObjectException):
                 raise ValueError(f"Table {request.id} does not exist")
             logger.error(f"Failed to describe table {request.id}: {e}")
             raise
-    
+
     def register_table(self, request: RegisterTableRequest) -> RegisterTableResponse:
-        """Register an existing Lance table in the Hive Metastore.
-        
-        Note: This will open the Lance dataset to get schema and version information.
-        If you want to avoid opening the dataset, you can provide 'version' in properties.
-        """
+        """Register an existing Lance table in the Hive Metastore."""
         try:
-            database, table_name = self._normalize_identifier(request.id)
-            
-            # Determine managed_by value
+            catalog, database, table_name = self._normalize_identifier(request.id)
+
             managed_by = request.properties.get(MANAGED_BY_KEY, "storage") if request.properties else "storage"
-            
-            # We always need to open the dataset to get schema for Hive columns
+
             dataset = lance.dataset(request.location)
             schema = dataset.schema
-            
-            # Only track version if managed_by is "impl"
+
             version = None
             if managed_by == "impl":
-                # Get version from properties or dataset
                 version = request.properties.get(VERSION_KEY) if request.properties else None
                 if version is None:
                     version = str(dataset.version)
-            
-            # Create Hive table object
+
             if not HiveTable:
                 raise ImportError("Hive dependencies not available")
+
             hive_table = HiveTable()
             hive_table.dbName = database
             hive_table.tableName = table_name
             hive_table.owner = request.properties.get("owner", os.getenv("USER", "")) if request.properties else os.getenv("USER", "")
-            # Use current time if file doesn't exist yet
+
             import time
             current_time = int(time.time())
             try:
@@ -511,8 +529,7 @@ class Hive2Namespace(LanceNamespace):
                 hive_table.createTime = current_time
                 hive_table.lastAccessTime = current_time
             hive_table.tableType = EXTERNAL_TABLE
-            
-            # Set storage descriptor
+
             if not StorageDescriptor:
                 raise ImportError("Hive dependencies not available")
             sd = StorageDescriptor()
@@ -521,190 +538,130 @@ class Hive2Namespace(LanceNamespace):
             sd.outputFormat = "com.lancedb.lance.mapred.LanceOutputFormat"
             sd.compressed = False
             sd.cols = self._pyarrow_schema_to_hive_fields(schema)
-            
-            # Set SerDe info
+
             if not SerDeInfo:
                 raise ImportError("Hive dependencies not available")
             serde = SerDeInfo()
             serde.serializationLib = "com.lancedb.lance.mapred.LanceSerDe"
             sd.serdeInfo = serde
-            
+
             hive_table.sd = sd
-            
-            # Set table parameters per hive.md specification
+
             hive_table.parameters = {
                 TABLE_TYPE_KEY: LANCE_TABLE_FORMAT,
                 MANAGED_BY_KEY: managed_by,
             }
-            
-            # Only set version if managed_by is "impl"
+
             if managed_by == "impl" and version is not None:
                 hive_table.parameters[VERSION_KEY] = version
-            
+
             if request.properties:
-                # Add other properties but don't override the required ones
                 for k, v in request.properties.items():
                     if k not in [TABLE_TYPE_KEY, MANAGED_BY_KEY, VERSION_KEY]:
                         hive_table.parameters[k] = v
-            
+
             with self.client as client:
                 client.create_table(hive_table)
-            
+
             return RegisterTableResponse(
                 location=request.location,
                 properties=request.properties
             )
+
         except Exception as e:
             if AlreadyExistsException and isinstance(e, AlreadyExistsException):
                 raise ValueError(f"Table {request.id} already exists")
             logger.error(f"Failed to register table {request.id}: {e}")
             raise
-    
+
     def table_exists(self, request: TableExistsRequest) -> None:
-        """Check if a table exists in the Hive Metastore."""
+        """Check if a table exists."""
         try:
-            database, table_name = self._normalize_identifier(request.id)
-            
+            catalog, database, table_name = self._normalize_identifier(request.id)
+
             with self.client as client:
                 table = client.get_table(database, table_name)
-                
-                # Check if it's a Lance table (case insensitive)
+
                 if not table.parameters:
                     raise ValueError(f"Table {request.id} is not a Lance table")
                 table_type = table.parameters.get(TABLE_TYPE_KEY, "").lower()
                 if table_type != LANCE_TABLE_FORMAT:
                     raise ValueError(f"Table {request.id} is not a Lance table")
+
         except Exception as e:
             if NoSuchObjectException and isinstance(e, NoSuchObjectException):
                 raise ValueError(f"Table {request.id} does not exist")
             logger.error(f"Failed to check table existence {request.id}: {e}")
             raise
-    
+
     def drop_table(self, request: DropTableRequest) -> DropTableResponse:
-        """Drop a table from the Hive Metastore."""
-        try:
-            database, table_name = self._normalize_identifier(request.id)
-            
-            with self.client as client:
-                # Get table to check if it's a Lance table
-                table = client.get_table(database, table_name)
-                
-                # Check if it's a Lance table (case insensitive)
-                if not table.parameters:
-                    raise ValueError(f"Table {request.id} is not a Lance table")
-                table_type = table.parameters.get(TABLE_TYPE_KEY, "").lower()
-                if table_type != LANCE_TABLE_FORMAT:
-                    raise ValueError(f"Table {request.id} is not a Lance table")
-                
-                # Drop the table (always delete data for Lance tables)
-                client.drop_table(database, table_name, deleteData=True)
-            
-            return DropTableResponse()
-        except Exception as e:
-            if NoSuchObjectException and isinstance(e, NoSuchObjectException):
-                raise ValueError(f"Table {request.id} does not exist")
-            logger.error(f"Failed to drop table {request.id}: {e}")
-            raise
-    
+        """Drop a table from the Hive Metastore.
+
+        This operation is not supported. Use deregister_table to remove table metadata,
+        then use Lance SDK to delete the actual table data if needed.
+        """
+        raise NotImplementedError(
+            "drop_table is not supported. Use deregister_table to remove table metadata, "
+            "then use Lance SDK to delete the actual table data if needed."
+        )
+
     def deregister_table(self, request: DeregisterTableRequest) -> DeregisterTableResponse:
-        """Deregister a table from the Hive Metastore without deleting data."""
+        """Deregister a table without deleting data."""
         try:
-            database, table_name = self._normalize_identifier(request.id)
-            
+            catalog, database, table_name = self._normalize_identifier(request.id)
+
             with self.client as client:
-                # Get table to check if it's a Lance table
                 table = client.get_table(database, table_name)
-                
-                # Check if it's a Lance table (case insensitive)
+
                 if not table.parameters:
                     raise ValueError(f"Table {request.id} is not a Lance table")
                 table_type = table.parameters.get(TABLE_TYPE_KEY, "").lower()
                 if table_type != LANCE_TABLE_FORMAT:
                     raise ValueError(f"Table {request.id} is not a Lance table")
-                
+
                 location = table.sd.location if table.sd else None
-                
-                # Drop the table metadata only (don't delete data)
+
                 client.drop_table(database, table_name, deleteData=False)
-                
+
                 return DeregisterTableResponse(location=location)
+
         except Exception as e:
             if NoSuchObjectException and isinstance(e, NoSuchObjectException):
                 raise ValueError(f"Table {request.id} does not exist")
             logger.error(f"Failed to deregister table {request.id}: {e}")
             raise
-    
+
     def create_table(self, request: CreateTableRequest, request_data: bytes) -> CreateTableResponse:
-        """Create a new Lance table and register it in the Hive Metastore."""
-        try:
-            database, table_name = self._normalize_identifier(request.id)
-            
-            if not request_data:
-                raise ValueError("Request data (Arrow IPC stream) is required for create_table")
-            
-            # Determine table location
-            location = request.location
-            if not location:
-                location = self._get_table_location(database, table_name)
-            
-            # Extract table from Arrow IPC stream
-            try:
-                reader = pa.ipc.open_stream(request_data)
-                table = reader.read_all()
-            except Exception as e:
-                raise ValueError(f"Invalid Arrow IPC stream: {e}")
-            
-            # Create Lance dataset
-            if request.mode == "create":
-                # Check if dataset already exists
-                if os.path.exists(location):
-                    raise ValueError(f"Table {request.id} already exists at {location}")
-                dataset = lance.write_dataset(table, location)
-            elif request.mode == "create_or_replace":
-                dataset = lance.write_dataset(table, location, mode="overwrite")
-            else:
-                raise ValueError(f"Unsupported create mode: {request.mode}")
-            
-            # Register in Hive Metastore
-            register_request = RegisterTableRequest(
-                id=request.id,
-                location=location,
-                properties=request.properties
-            )
-            self.register_table(register_request)
-            
-            return CreateTableResponse(
-                id=request.id,
-                location=location,
-                version=dataset.version
-            )
-        except Exception as e:
-            logger.error(f"Failed to create table {request.id}: {e}")
-            raise
-    
+        """Create a new Lance table and register it.
+
+        This operation is not supported. Use create_empty_table to declare table metadata,
+        then use Lance SDK to create the actual table data.
+        """
+        raise NotImplementedError(
+            "create_table is not supported. Use create_empty_table to declare table metadata, "
+            "then use Lance SDK to create the actual table data."
+        )
+
     def create_empty_table(self, request: CreateEmptyTableRequest) -> CreateEmptyTableResponse:
-        """Create an empty table (metadata only) in Hive metastore."""
+        """Create an empty table (metadata only)."""
         try:
-            database, table_name = self._normalize_identifier(request.id)
-            
-            # Determine table location
+            catalog, database, table_name = self._normalize_identifier(request.id)
+
             location = request.location
             if not location:
-                location = self._get_table_location(database, table_name)
-            
-            # Create a minimal schema for Hive (placeholder schema)
+                location = self._get_table_location(catalog, database, table_name)
+
             if not FieldSchema:
                 raise ImportError("Hive dependencies not available")
-            
+
             fields = [
                 FieldSchema(
                     name='__placeholder_id',
                     type='bigint',
-                    comment='Placeholder column for empty table'
+                    comment='Placeholder column'
                 )
             ]
-            
-            # Create Hive table metadata without creating actual Lance dataset
+
             storage_descriptor = StorageDescriptor(
                 cols=fields,
                 location=location,
@@ -714,17 +671,16 @@ class Hive2Namespace(LanceNamespace):
                     serializationLib='org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe'
                 )
             )
-            
-            # Set table parameters to identify it as Lance table
+
             parameters = {
-                TABLE_TYPE_KEY: "LANCE",
+                TABLE_TYPE_KEY: LANCE_TABLE_FORMAT,
                 MANAGED_BY_KEY: "storage",
-                'empty_table': 'true',  # Mark as empty table
+                'empty_table': 'true',
             }
-            
+
             if request.properties:
                 parameters.update(request.properties)
-            
+
             hive_table = HiveTable(
                 tableName=table_name,
                 dbName=database,
@@ -732,19 +688,18 @@ class Hive2Namespace(LanceNamespace):
                 parameters=parameters,
                 tableType='EXTERNAL_TABLE'
             )
-            
-            # Create table in Hive
-            with self.client_pool.get_client() as client:
+
+            with self.client as client:
                 client.create_table(hive_table)
-            
+
             return CreateEmptyTableResponse(location=location)
-            
+
         except AlreadyExistsException:
             raise ValueError(f"Table {request.id} already exists")
         except Exception as e:
             logger.error(f"Failed to create empty table {request.id}: {e}")
             raise
-    
+
     def _pyarrow_schema_to_hive_fields(self, schema: pa.Schema) -> List[FieldSchema]:
         """Convert PyArrow schema to Hive field schemas."""
         fields = []
@@ -759,7 +714,7 @@ class Hive2Namespace(LanceNamespace):
             )
             fields.append(hive_field)
         return fields
-    
+
     def _pyarrow_type_to_hive_type(self, dtype: pa.DataType) -> str:
         """Convert PyArrow data type to Hive type string."""
         if pa.types.is_boolean(dtype):
@@ -795,16 +750,14 @@ class Hive2Namespace(LanceNamespace):
                 field_strs.append(f"{field.name}:{field_type}")
             return f"struct<{','.join(field_strs)}>"
         else:
-            return "string"  # Default to string for unknown types
-    
+            return "string"
+
     def __getstate__(self):
-        """Prepare instance for pickling by excluding unpickleable objects."""
+        """Prepare instance for pickling."""
         state = self.__dict__.copy()
-        # Remove the unpickleable Hive client
         state['_client'] = None
         return state
-    
+
     def __setstate__(self, state):
         """Restore instance from pickled state."""
         self.__dict__.update(state)
-        # The Hive client will be re-initialized lazily via the property

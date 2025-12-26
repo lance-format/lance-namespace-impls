@@ -101,7 +101,7 @@ If the namespace does not exist, return error code `1` (NamespaceNotFound). If t
 
 ### DropNamespace
 
-Removes a namespace from the Iceberg catalog.
+Removes a namespace from the Iceberg catalog. Only RESTRICT mode is supported; CASCADE mode is not implemented.
 
 The implementation:
 
@@ -110,7 +110,11 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the namespace is not empty, return error code `3` (NamespaceNotEmpty). If the server returns an error, return error code `18` (Internal).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the namespace is not empty, return error code `3` (NamespaceNotEmpty).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DeclareTable
 
@@ -148,18 +152,22 @@ If the namespace does not exist, return error code `1` (NamespaceNotFound). If t
 
 ### DescribeTable
 
-Retrieves metadata for a Lance table.
+Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. When `load_detailed_metadata=false`, only the table location and storage_options are returned; other fields (version, table_uri, schema, stats) are null.
 
 The implementation:
 
 1. Parse the table identifier to extract namespace and table name
 2. GET `/v1/{prefix}/namespaces/{namespace}/tables/{table}`
 3. Verify the table has `table_type=lance` property
-4. Return the table location and properties
+4. Return the table location and storage_options from `properties`
 
 **Error Handling:**
 
-If the table does not exist, return error code `4` (TableNotFound). If the table is not a Lance table, return error code `13` (InvalidInput). If the server returns an error, return error code `18` (Internal).
+If the table does not exist, return error code `4` (TableNotFound).
+
+If the table is not a Lance table, return error code `13` (InvalidInput).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DeregisterTable
 

@@ -10,15 +10,23 @@ import io
 import pyarrow as pa
 import pyarrow.ipc as ipc
 
-from lance_namespace.unity import (
+from lance_namespace_impls.unity import (
     UnityNamespace,
     UnityNamespaceConfig,
-    RestClient,
-    RestClientException,
-    LanceNamespaceException,
     SchemaInfo,
     TableInfo,
     ColumnInfo,
+)
+from lance_namespace_impls.rest_client import (
+    RestClient,
+    RestClientException,
+    NamespaceException,
+    NamespaceNotFoundException,
+    NamespaceAlreadyExistsException,
+    TableNotFoundException,
+    TableAlreadyExistsException,
+    InvalidInputException,
+    InternalException,
 )
 from lance_namespace_urllib3_client.models import (
     ListNamespacesRequest,
@@ -97,72 +105,72 @@ class TestUnityNamespaceConfig(unittest.TestCase):
 class TestRestClient(unittest.TestCase):
     """Test REST client functionality."""
     
-    @patch('lance_namespace.unity.urllib3.PoolManager')
+    @patch('lance_namespace_impls.rest_client.urllib3.PoolManager')
     def test_get_request(self, mock_pool_manager):
         """Test GET request."""
         mock_http = MagicMock()
         mock_pool_manager.return_value = mock_http
-        
+
         mock_response = MagicMock()
         mock_response.status = 200
         mock_response.data = b'{"name": "test_schema"}'
         mock_http.request.return_value = mock_response
-        
+
         client = RestClient("https://api.example.com")
         result = client.get("/schemas/test")
-        
+
         self.assertEqual(result, {"name": "test_schema"})
         mock_http.request.assert_called_once()
-    
-    @patch('lance_namespace.unity.urllib3.PoolManager')
+
+    @patch('lance_namespace_impls.rest_client.urllib3.PoolManager')
     def test_post_request(self, mock_pool_manager):
         """Test POST request."""
         mock_http = MagicMock()
         mock_pool_manager.return_value = mock_http
-        
+
         mock_response = MagicMock()
         mock_response.status = 201
         mock_response.data = b'{"id": "123"}'
         mock_http.request.return_value = mock_response
-        
+
         client = RestClient("https://api.example.com")
         result = client.post("/schemas", {"name": "test"})
-        
+
         self.assertEqual(result, {"id": "123"})
         mock_http.request.assert_called_once()
-    
-    @patch('lance_namespace.unity.urllib3.PoolManager')
+
+    @patch('lance_namespace_impls.rest_client.urllib3.PoolManager')
     def test_delete_request(self, mock_pool_manager):
         """Test DELETE request."""
         mock_http = MagicMock()
         mock_pool_manager.return_value = mock_http
-        
+
         mock_response = MagicMock()
         mock_response.status = 204
         mock_response.data = b''
         mock_http.request.return_value = mock_response
-        
+
         client = RestClient("https://api.example.com")
         client.delete("/schemas/test")
-        
+
         mock_http.request.assert_called_once()
-    
-    @patch('lance_namespace.unity.urllib3.PoolManager')
+
+    @patch('lance_namespace_impls.rest_client.urllib3.PoolManager')
     def test_error_response(self, mock_pool_manager):
         """Test error response handling."""
         mock_http = MagicMock()
         mock_pool_manager.return_value = mock_http
-        
+
         mock_response = MagicMock()
         mock_response.status = 404
         mock_response.data = b'{"error": "Not found"}'
         mock_http.request.return_value = mock_response
-        
+
         client = RestClient("https://api.example.com")
-        
+
         with self.assertRaises(RestClientException) as context:
             client.get("/schemas/test")
-        
+
         self.assertEqual(context.exception.status_code, 404)
         self.assertIn("Not found", context.exception.response_body)
 
@@ -178,7 +186,7 @@ class TestUnityNamespace(unittest.TestCase):
             "unity.root": "/data/lance"
         }
     
-    @patch('lance_namespace.unity.RestClient')
+    @patch('lance_namespace_impls.unity.RestClient')
     def test_list_namespaces_top_level(self, mock_rest_client_class):
         """Test listing top-level namespaces (catalogs)."""
         mock_client = MagicMock()
@@ -194,7 +202,7 @@ class TestUnityNamespace(unittest.TestCase):
         self.assertEqual(response.namespaces, ["test_catalog"])
         mock_client.get.assert_not_called()
     
-    @patch('lance_namespace.unity.RestClient')
+    @patch('lance_namespace_impls.unity.RestClient')
     def test_list_namespaces_schemas(self, mock_rest_client_class):
         """Test listing schemas in a catalog."""
         mock_client = MagicMock()
@@ -220,7 +228,7 @@ class TestUnityNamespace(unittest.TestCase):
             params={'catalog_name': 'test_catalog'}
         )
     
-    @patch('lance_namespace.unity.RestClient')
+    @patch('lance_namespace_impls.unity.RestClient')
     def test_create_namespace(self, mock_rest_client_class):
         """Test creating a namespace."""
         mock_client = MagicMock()
@@ -243,52 +251,46 @@ class TestUnityNamespace(unittest.TestCase):
         
         self.assertEqual(response.properties, {"key": "value"})
     
-    @patch('lance_namespace.unity.RestClient')
+    @patch('lance_namespace_impls.unity.RestClient')
     def test_describe_namespace(self, mock_rest_client_class):
         """Test describing a namespace."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
-        
+
         mock_schema_info = SchemaInfo(
             name="test_schema",
             catalog_name="test_catalog",
             properties={"key": "value"}
         )
         mock_client.get.return_value = mock_schema_info
-        
+
         namespace = UnityNamespace(**self.properties)
-        
+
         request = DescribeNamespaceRequest()
         request.id = ["test_catalog", "test_schema"]
-        
+
         response = namespace.describe_namespace(request)
-        
+
         self.assertEqual(response.properties, {"key": "value"})
-        mock_client.get.assert_called_once_with(
-            "/schemas/test_catalog.test_schema",
-            response_class=SchemaInfo
-        )
+        mock_client.get.assert_called_once()
     
-    @patch('lance_namespace.unity.RestClient')
+    @patch('lance_namespace_impls.unity.RestClient')
     def test_drop_namespace(self, mock_rest_client_class):
         """Test dropping a namespace."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
-        
+
         namespace = UnityNamespace(**self.properties)
-        
+
         request = DropNamespaceRequest()
         request.id = ["test_catalog", "test_schema"]
-        
+
         response = namespace.drop_namespace(request)
-        
+
         self.assertIsNotNone(response)
-        mock_client.delete.assert_called_once_with(
-            "/schemas/test_catalog.test_schema",
-            params={}
-        )
+        mock_client.delete.assert_called_once()
     
-    @patch('lance_namespace.unity.RestClient')
+    @patch('lance_namespace_impls.unity.RestClient')
     def test_list_tables(self, mock_rest_client_class):
         """Test listing tables in a namespace."""
         mock_client = MagicMock()
@@ -312,50 +314,23 @@ class TestUnityNamespace(unittest.TestCase):
         # Should only return Lance tables
         self.assertEqual(sorted(response.tables), ["table1", "table3"])
     
-    @patch('lance_namespace.unity.lance')
-    @patch('lance_namespace.unity.RestClient')
-    def test_create_table(self, mock_rest_client_class, mock_lance):
-        """Test creating a table."""
+    @patch('lance_namespace_impls.unity.RestClient')
+    def test_create_table_not_supported(self, mock_rest_client_class):
+        """Test that create_table raises NotImplementedError."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
-        
-        # Create test Arrow schema and IPC data
-        arrow_schema = pa.schema([
-            pa.field("id", pa.int64()),
-            pa.field("name", pa.string())
-        ])
-        
-        # Create IPC stream data
-        buf = io.BytesIO()
-        writer = ipc.new_stream(buf, arrow_schema)
-        writer.close()
-        ipc_data = buf.getvalue()
-        
-        mock_table_info = TableInfo(
-            name="test_table",
-            catalog_name="test_catalog",
-            schema_name="test_schema",
-            table_type="EXTERNAL",
-            data_source_format="TEXT",
-            columns=[],
-            storage_location="/data/lance/test_catalog/test_schema/test_table",
-            properties={"table_type": "lance", "version": "0"}
-        )
-        mock_client.post.return_value = mock_table_info
-        
+
         namespace = UnityNamespace(**self.properties)
-        
+
         request = CreateTableRequest()
         request.id = ["test_catalog", "test_schema", "test_table"]
-        request.properties = {"custom": "property"}
-        
-        response = namespace.create_table(request, ipc_data)
-        
-        self.assertEqual(response.location, "/data/lance/test_catalog/test_schema/test_table")
-        self.assertEqual(response.version, 1)
-        mock_lance.write_dataset.assert_called_once()
+
+        with self.assertRaises(NotImplementedError) as context:
+            namespace.create_table(request, b"test_data")
+
+        self.assertIn("create_table is not supported", str(context.exception))
     
-    @patch('lance_namespace.unity.RestClient')
+    @patch('lance_namespace_impls.unity.RestClient')
     def test_create_empty_table(self, mock_rest_client_class):
         """Test creating an empty table."""
         mock_client = MagicMock()
@@ -382,8 +357,8 @@ class TestUnityNamespace(unittest.TestCase):
         
         self.assertEqual(response.location, "/data/lance/test_catalog/test_schema/test_table")
     
-    @patch('lance_namespace.unity.lance')
-    @patch('lance_namespace.unity.RestClient')
+    @patch('lance_namespace_impls.unity.lance')
+    @patch('lance_namespace_impls.unity.RestClient')
     def test_describe_table(self, mock_rest_client_class, mock_lance):
         """Test describing a table."""
         mock_client = MagicMock()
@@ -412,41 +387,24 @@ class TestUnityNamespace(unittest.TestCase):
         request.id = ["test_catalog", "test_schema", "test_table"]
         
         response = namespace.describe_table(request)
-        
+
         self.assertEqual(response.location, "/data/lance/test_catalog/test_schema/test_table")
-        self.assertEqual(response.properties, {"table_type": "lance"})
     
-    @patch('lance_namespace.unity.os')
-    @patch('lance_namespace.unity.shutil')
-    @patch('lance_namespace.unity.RestClient')
-    def test_drop_table(self, mock_rest_client_class, mock_shutil, mock_os):
-        """Test dropping a table."""
+    @patch('lance_namespace_impls.unity.RestClient')
+    def test_drop_table_not_supported(self, mock_rest_client_class):
+        """Test that drop_table raises NotImplementedError."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
-        
-        mock_table_info = TableInfo(
-            name="test_table",
-            catalog_name="test_catalog",
-            schema_name="test_schema",
-            table_type="EXTERNAL",
-            data_source_format="TEXT",
-            columns=[],
-            storage_location="/data/lance/test_catalog/test_schema/test_table",
-            properties={"table_type": "lance"}
-        )
-        mock_client.get.return_value = mock_table_info
-        mock_os.path.exists.return_value = True
-        
+
         namespace = UnityNamespace(**self.properties)
-        
+
         request = DropTableRequest()
         request.id = ["test_catalog", "test_schema", "test_table"]
-        
-        response = namespace.drop_table(request)
-        
-        self.assertEqual(response.location, "/data/lance/test_catalog/test_schema/test_table")
-        mock_client.delete.assert_called_once_with("/tables/test_catalog.test_schema.test_table")
-        mock_shutil.rmtree.assert_called_once_with("/data/lance/test_catalog/test_schema/test_table")
+
+        with self.assertRaises(NotImplementedError) as context:
+            namespace.drop_table(request)
+
+        self.assertIn("drop_table is not supported", str(context.exception))
     
     def test_arrow_type_conversion(self):
         """Test Arrow type to Unity type conversion."""

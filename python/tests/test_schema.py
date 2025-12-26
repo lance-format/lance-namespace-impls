@@ -4,7 +4,7 @@ Tests for schema conversion utilities.
 import pytest
 import pyarrow as pa
 
-from lance_namespace.schema import (
+from lance_namespace_impls.schema import (
     convert_json_arrow_schema_to_pyarrow,
     convert_json_arrow_type_to_pyarrow,
 )

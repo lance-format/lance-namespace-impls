@@ -106,18 +106,21 @@ If the namespace does not exist, return error code `1` (NamespaceNotFound). If t
 
 ### DropNamespace
 
-Removes a schema from Unity Catalog.
+Removes a schema from Unity Catalog. Only RESTRICT mode is supported; CASCADE mode is not implemented.
 
 The implementation:
 
 1. Parse the namespace identifier (must be 2-level: catalog.schema)
 2. Verify the catalog matches the configured catalog
-3. For CASCADE behavior: add `force=true` parameter
-4. DELETE `/schemas/{catalog}.{schema}`
+3. DELETE `/schemas/{catalog}.{schema}`
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the namespace is not empty and behavior is RESTRICT, return error code `3` (NamespaceNotEmpty). If the server returns an error, return error code `18` (Internal).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the namespace is not empty, return error code `3` (NamespaceNotEmpty).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DeclareTable
 
@@ -160,7 +163,7 @@ If the namespace does not exist, return error code `1` (NamespaceNotFound). If t
 
 ### DescribeTable
 
-Retrieves metadata for a Lance table.
+Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. When `load_detailed_metadata=false`, only the table location and storage_options are returned; other fields (version, table_uri, schema, stats) are null.
 
 The implementation:
 
@@ -168,11 +171,15 @@ The implementation:
 2. Verify the catalog matches the configured catalog
 3. GET `/tables/{catalog}.{schema}.{table}`
 4. Verify the table is a Lance table (check `properties.table_type=lance`)
-5. Return the table location, properties, and schema
+5. Return the table location from `storage_location` and storage_options from `properties`
 
 **Error Handling:**
 
-If the table does not exist, return error code `4` (TableNotFound). If the table is not a Lance table, return error code `13` (InvalidInput). If the server returns an error, return error code `18` (Internal).
+If the table does not exist, return error code `4` (TableNotFound).
+
+If the table is not a Lance table, return error code `13` (InvalidInput).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DeregisterTable
 

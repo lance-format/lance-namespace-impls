@@ -7,7 +7,7 @@ import tempfile
 from unittest.mock import Mock, MagicMock, patch
 import pyarrow as pa
 
-from lance_namespace import connect
+from lance_namespace_impls.hive2 import Hive2Namespace
 from lance_namespace_urllib3_client.models import (
     ListNamespacesRequest,
     DescribeNamespaceRequest,
@@ -20,15 +20,14 @@ from lance_namespace_urllib3_client.models import (
     DeregisterTableRequest,
     TableExistsRequest,
     DropTableRequest,
-    CreateTableRequest,
 )
 
 
 @pytest.fixture
 def mock_hive_client():
     """Create a mock Hive client."""
-    with patch("lance_namespace.hive.HIVE_AVAILABLE", True):
-        with patch("lance_namespace.hive.HiveMetastoreClient") as mock_client_class:
+    with patch("lance_namespace_impls.hive2.HIVE_AVAILABLE", True):
+        with patch("lance_namespace_impls.hive2.HiveMetastoreClient") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value = mock_client
             yield mock_client
@@ -37,44 +36,44 @@ def mock_hive_client():
 @pytest.fixture
 def hive_namespace(mock_hive_client):
     """Create a Hive2Namespace instance with mocked client."""
-    with patch("lance_namespace.hive.HIVE_AVAILABLE", True):
-        namespace = connect("hive2", {
-            "uri": "thrift://localhost:9083",
-            "root": "/tmp/warehouse"
-        })
+    with patch("lance_namespace_impls.hive2.HIVE_AVAILABLE", True):
+        namespace = Hive2Namespace(
+            uri="thrift://localhost:9083",
+            root="/tmp/warehouse"
+        )
         namespace._client = mock_hive_client
         return namespace
 
 
 class TestHive2Namespace:
     """Test cases for Hive2Namespace."""
-    
+
     def test_initialization(self):
         """Test namespace initialization."""
-        with patch("lance_namespace.hive.HIVE_AVAILABLE", True):
-            with patch("lance_namespace.hive.HiveMetastoreClient") as mock_client:
-                namespace = connect("hive2", {
-                    "uri": "thrift://localhost:9083",
-                    "root": "/tmp/warehouse",
-                    "ugi": "user:group1,group2"
-                })
-                
+        with patch("lance_namespace_impls.hive2.HIVE_AVAILABLE", True):
+            with patch("lance_namespace_impls.hive2.HiveMetastoreClient") as mock_client:
+                namespace = Hive2Namespace(
+                    uri="thrift://localhost:9083",
+                    root="/tmp/warehouse",
+                    ugi="user:group1,group2"
+                )
+
                 assert namespace.uri == "thrift://localhost:9083"
                 assert namespace.root == "/tmp/warehouse"
                 assert namespace.ugi == "user:group1,group2"
-                
+
                 # Client should not be initialized yet (lazy loading)
                 mock_client.assert_not_called()
-                
+
                 # Access the client property to trigger initialization
                 _ = namespace.client
                 mock_client.assert_called_once_with("thrift://localhost:9083", "user:group1,group2")
-    
+
     def test_initialization_without_hive_deps(self):
         """Test that initialization fails gracefully without Hive dependencies."""
-        with patch("lance_namespace.hive.HIVE_AVAILABLE", False):
-            with pytest.raises(ValueError, match="Hive dependencies not installed"):
-                connect("hive2", {"uri": "thrift://localhost:9083"})
+        with patch("lance_namespace_impls.hive2.HIVE_AVAILABLE", False):
+            with pytest.raises(ImportError, match="Hive dependencies not installed"):
+                Hive2Namespace(uri="thrift://localhost:9083")
     
     def test_list_namespaces(self, hive_namespace, mock_hive_client):
         """Test listing namespaces (databases)."""
@@ -116,7 +115,7 @@ class TestHive2Namespace:
         mock_hive_client.__enter__.return_value = mock_client_instance
         
         # Mock HiveDatabase class
-        with patch("lance_namespace.hive.HiveDatabase") as mock_hive_db_class:
+        with patch("lance_namespace_impls.hive2.HiveDatabase") as mock_hive_db_class:
             mock_hive_db = MagicMock()
             mock_hive_db_class.return_value = mock_hive_db
             
@@ -203,31 +202,23 @@ class TestHive2Namespace:
         """Test describing a table returns Hive metadata without opening Lance dataset."""
         mock_table = MagicMock()
         mock_table.sd.location = "/tmp/warehouse/test_db.db/test_table"
-        mock_table.owner = "table_owner"  # Set owner on table object
+        mock_table.owner = "table_owner"
         mock_table.parameters = {
             "table_type": "lance",
-            "version": "42",  # Use 'version' not 'lance.version' per hive.md spec
-            "created_time": "2024-01-01"
+            "version": "42",
         }
-        
+
         mock_client_instance = MagicMock()
         mock_client_instance.get_table.return_value = mock_table
         mock_hive_client.__enter__.return_value = mock_client_instance
-        
+
         request = DescribeTableRequest(id=["test_db", "test_table"])
         response = hive_namespace.describe_table(request)
-        
-        # Verify response contains Hive metadata
+
         assert response.location == "/tmp/warehouse/test_db.db/test_table"
-        assert response.version == 42  # Parsed from lance.version
-        assert response.var_schema is None  # No schema since we don't open Lance dataset
-        assert response.properties["owner"] == "table_owner"  # From table.owner
-        assert response.properties["created_time"] == "2024-01-01"
-        # Properties should include all parameters from Hive
-        assert response.properties["table_type"] == "lance"
-        assert response.properties["version"] == "42"
-        
-        # Verify we called get_table but didn't try to open Lance dataset
+        assert response.version == 42
+        assert response.var_schema is None
+
         mock_client_instance.get_table.assert_called_once_with("test_db", "test_table")
     
     def test_register_table(self, hive_namespace, mock_hive_client):
@@ -242,7 +233,7 @@ class TestHive2Namespace:
                 "name": ["Alice", "Bob", "Charlie"]
             })
             
-            with patch("lance_namespace.hive.lance.dataset") as mock_dataset_func:
+            with patch("lance_namespace_impls.hive2.lance.dataset") as mock_dataset_func:
                 mock_dataset = MagicMock()
                 mock_dataset.schema = data.schema
                 mock_dataset.version = 1
@@ -252,10 +243,10 @@ class TestHive2Namespace:
                 mock_hive_client.__enter__.return_value = mock_client_instance
                 
                 # Mock all Hive classes
-                with patch("lance_namespace.hive.HiveTable") as mock_hive_table_class, \
-                     patch("lance_namespace.hive.StorageDescriptor") as mock_sd_class, \
-                     patch("lance_namespace.hive.SerDeInfo") as mock_serde_class, \
-                     patch("lance_namespace.hive.FieldSchema") as mock_field_class:
+                with patch("lance_namespace_impls.hive2.HiveTable") as mock_hive_table_class, \
+                     patch("lance_namespace_impls.hive2.StorageDescriptor") as mock_sd_class, \
+                     patch("lance_namespace_impls.hive2.SerDeInfo") as mock_serde_class, \
+                     patch("lance_namespace_impls.hive2.FieldSchema") as mock_field_class:
                     
                     mock_hive_table = MagicMock()
                     mock_hive_table_class.return_value = mock_hive_table
@@ -306,7 +297,7 @@ class TestHive2Namespace:
                 "name": ["Alice", "Bob", "Charlie"]
             })
             
-            with patch("lance_namespace.hive.lance.dataset") as mock_dataset_func:
+            with patch("lance_namespace_impls.hive2.lance.dataset") as mock_dataset_func:
                 mock_dataset = MagicMock()
                 mock_dataset.schema = data.schema
                 mock_dataset.version = 42
@@ -316,10 +307,10 @@ class TestHive2Namespace:
                 mock_hive_client.__enter__.return_value = mock_client_instance
                 
                 # Mock all Hive classes
-                with patch("lance_namespace.hive.HiveTable") as mock_hive_table_class, \
-                     patch("lance_namespace.hive.StorageDescriptor") as mock_sd_class, \
-                     patch("lance_namespace.hive.SerDeInfo") as mock_serde_class, \
-                     patch("lance_namespace.hive.FieldSchema") as mock_field_class:
+                with patch("lance_namespace_impls.hive2.HiveTable") as mock_hive_table_class, \
+                     patch("lance_namespace_impls.hive2.StorageDescriptor") as mock_sd_class, \
+                     patch("lance_namespace_impls.hive2.SerDeInfo") as mock_serde_class, \
+                     patch("lance_namespace_impls.hive2.FieldSchema") as mock_field_class:
                     
                     mock_hive_table = MagicMock()
                     mock_hive_table_class.return_value = mock_hive_table
@@ -357,22 +348,12 @@ class TestHive2Namespace:
         
         mock_client_instance.get_table.assert_called_once_with("test_db", "test_table")
     
-    def test_drop_table(self, hive_namespace, mock_hive_client):
-        """Test dropping a table."""
-        mock_table = MagicMock()
-        mock_table.parameters = {"table_type": "lance"}
-        
-        mock_client_instance = MagicMock()
-        mock_client_instance.get_table.return_value = mock_table
-        mock_hive_client.__enter__.return_value = mock_client_instance
-        
+    def test_drop_table_not_supported(self, hive_namespace, mock_hive_client):
+        """Test that drop_table raises NotImplementedError."""
         request = DropTableRequest(id=["test_db", "test_table"])
-        response = hive_namespace.drop_table(request)
-        
-        mock_client_instance.get_table.assert_called_once_with("test_db", "test_table")
-        mock_client_instance.drop_table.assert_called_once_with(
-            "test_db", "test_table", deleteData=True
-        )
+
+        with pytest.raises(NotImplementedError, match="drop_table is not supported"):
+            hive_namespace.drop_table(request)
     
     def test_deregister_table(self, hive_namespace, mock_hive_client):
         """Test deregistering a table without deleting data."""
@@ -439,41 +420,36 @@ class TestHive2Namespace:
     def test_pickle_support(self):
         """Test that Hive2Namespace can be pickled and unpickled for Ray compatibility."""
         import pickle
-        
-        with patch("lance_namespace.hive.HIVE_AVAILABLE", True):
-            with patch("lance_namespace.hive.HiveMetastoreClient"):
-                # Create a Hive2Namespace instance
-                namespace = connect("hive2", {
-                    "uri": "thrift://localhost:9083",
-                    "root": "/tmp/warehouse",
-                    "ugi": "user:group1,group2",
-                    "client.pool-size": "5",
-                    "storage.access_key_id": "test-key",
-                    "storage.secret_access_key": "test-secret"
-                })
-                
-                # Test pickling
+
+        with patch("lance_namespace_impls.hive2.HIVE_AVAILABLE", True):
+            with patch("lance_namespace_impls.hive2.HiveMetastoreClient"):
+                namespace = Hive2Namespace(
+                    uri="thrift://localhost:9083",
+                    root="/tmp/warehouse",
+                    ugi="user:group1,group2",
+                    **{
+                        "client.pool-size": "5",
+                        "storage.access_key_id": "test-key",
+                        "storage.secret_access_key": "test-secret"
+                    }
+                )
+
                 pickled = pickle.dumps(namespace)
                 assert pickled is not None
-                
-                # Test unpickling
+
                 restored = pickle.loads(pickled)
-                assert isinstance(restored, namespace.__class__)
-                
-                # Verify configuration is preserved
+                assert isinstance(restored, Hive2Namespace)
+
                 assert restored.uri == "thrift://localhost:9083"
                 assert restored.root == "/tmp/warehouse"
                 assert restored.ugi == "user:group1,group2"
                 assert restored.pool_size == 5
                 assert restored.storage_properties["access_key_id"] == "test-key"
                 assert restored.storage_properties["secret_access_key"] == "test-secret"
-                
-                # Verify client is None after unpickling (will be lazily initialized)
+
                 assert restored._client is None
-                
-                # Test that client can be re-initialized after unpickling
-                with patch("lance_namespace.hive.HiveMetastoreClient") as mock_client:
-                    # This will create a new mock client when accessed
+
+                with patch("lance_namespace_impls.hive2.HiveMetastoreClient") as mock_client:
                     client = restored.client
                     assert client is not None
                     assert restored._client is not None

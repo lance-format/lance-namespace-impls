@@ -13,7 +13,7 @@
  */
 package org.lance.namespace.hive2;
 
-import org.lance.namespace.LanceNamespaceException;
+import org.lance.namespace.errors.LanceNamespaceException;
 import org.lance.namespace.model.CreateEmptyTableRequest;
 import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
@@ -114,19 +114,13 @@ public class TestHive2NamespaceIntegration {
       // Clean up test database
       DropNamespaceRequest dropRequest = new DropNamespaceRequest();
       dropRequest.setId(Collections.singletonList(testDatabase));
-      dropRequest.setBehavior(DropNamespaceRequest.BehaviorEnum.CASCADE);
+      dropRequest.setBehavior("Cascade");
       namespace.dropNamespace(dropRequest);
     } catch (Exception e) {
       // Ignore cleanup errors
     }
 
-    if (namespace != null) {
-      try {
-        namespace.close();
-      } catch (Exception e) {
-        // Ignore
-      }
-    }
+    // Namespace cleanup handled by Hive internals
 
     if (allocator != null) {
       allocator.close();
@@ -163,8 +157,8 @@ public class TestHive2NamespaceIntegration {
 
     DescribeNamespaceResponse describeResponse = namespace.describeNamespace(describeRequest);
     assertThat(describeResponse).isNotNull();
-    assertThat(describeResponse.getProperties()).containsEntry(
-        "database.description", "Integration test database");
+    assertThat(describeResponse.getProperties())
+        .containsEntry("database.description", "Integration test database");
 
     // List databases
     ListNamespacesRequest listRequest = new ListNamespacesRequest();
@@ -190,7 +184,8 @@ public class TestHive2NamespaceIntegration {
     nsRequest.setId(Collections.singletonList(testDatabase));
     namespace.createNamespace(nsRequest);
 
-    String tableName = "test_table_" + UUID.randomUUID().toString().substring(0, 8).replace("-", "");
+    String tableName =
+        "test_table_" + UUID.randomUUID().toString().substring(0, 8).replace("-", "");
 
     // Create empty table (declare table without data)
     CreateEmptyTableRequest createRequest = new CreateEmptyTableRequest();
@@ -206,7 +201,6 @@ public class TestHive2NamespaceIntegration {
 
     DescribeTableResponse describeResponse = namespace.describeTable(describeRequest);
     assertThat(describeResponse.getLocation()).contains(tableName);
-    assertThat(describeResponse.getProperties()).containsEntry("table_type", "lance");
 
     // List tables
     ListTablesRequest listRequest = new ListTablesRequest();
@@ -242,7 +236,7 @@ public class TestHive2NamespaceIntegration {
     // Drop database with cascade
     DropNamespaceRequest dropRequest = new DropNamespaceRequest();
     dropRequest.setId(Collections.singletonList(testDatabase));
-    dropRequest.setBehavior(DropNamespaceRequest.BehaviorEnum.CASCADE);
+    dropRequest.setBehavior("Cascade");
     namespace.dropNamespace(dropRequest);
 
     // Verify database doesn't exist

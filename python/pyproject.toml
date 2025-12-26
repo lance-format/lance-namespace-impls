@@ -26,7 +26,12 @@ hive2 = [
     "thrift>=0.13.0",
     "hive-metastore-client>=1.0.0",
 ]
+hive3 = [
+    "thrift>=0.13.0",
+    "hive-metastore-client>=1.0.0",
+]
 unity = []
+polaris = []
 all = [
     "boto3>=1.35.0",
     "botocore>=1.35.0",

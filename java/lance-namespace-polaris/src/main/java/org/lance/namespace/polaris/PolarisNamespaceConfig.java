@@ -13,7 +13,7 @@
  */
 package org.lance.namespace.polaris;
 
-import org.lance.namespace.LanceNamespaceException;
+import org.lance.namespace.errors.InvalidInputException;
 
 import java.util.Map;
 
@@ -55,10 +55,7 @@ public class PolarisNamespaceConfig {
   private String getRequiredProperty(Map<String, String> properties, String key) {
     String value = properties.get(key);
     if (value == null || value.trim().isEmpty()) {
-      throw LanceNamespaceException.badRequest(
-          "Missing required configuration",
-          "ConfigurationError",
-          key,
+      throw new InvalidInputException(
           String.format("Required configuration property '%s' is not set", key));
     }
     return value.trim();
@@ -66,35 +63,20 @@ public class PolarisNamespaceConfig {
 
   private void validateConfig() {
     if (!endpoint.startsWith("http://") && !endpoint.startsWith("https://")) {
-      throw LanceNamespaceException.badRequest(
-          "Invalid endpoint format",
-          "ConfigurationError",
-          POLARIS_ENDPOINT,
+      throw new InvalidInputException(
           "Polaris endpoint must start with http:// or https://: " + endpoint);
     }
 
     if (connectTimeout <= 0) {
-      throw LanceNamespaceException.badRequest(
-          "Invalid timeout value",
-          "ConfigurationError",
-          POLARIS_CONNECT_TIMEOUT,
-          "Connect timeout must be positive: " + connectTimeout);
+      throw new InvalidInputException("Connect timeout must be positive: " + connectTimeout);
     }
 
     if (readTimeout <= 0) {
-      throw LanceNamespaceException.badRequest(
-          "Invalid timeout value",
-          "ConfigurationError",
-          POLARIS_READ_TIMEOUT,
-          "Read timeout must be positive: " + readTimeout);
+      throw new InvalidInputException("Read timeout must be positive: " + readTimeout);
     }
 
     if (maxRetries < 0) {
-      throw LanceNamespaceException.badRequest(
-          "Invalid retry value",
-          "ConfigurationError",
-          POLARIS_MAX_RETRIES,
-          "Max retries cannot be negative: " + maxRetries);
+      throw new InvalidInputException("Max retries cannot be negative: " + maxRetries);
     }
   }
 

@@ -90,19 +90,22 @@ If the namespace does not exist, return error code `1` (NamespaceNotFound). If t
 
 ### DropNamespace
 
-Removes a namespace from HMS.
+Removes a namespace from HMS. Only RESTRICT mode is supported; CASCADE mode is not implemented.
 
 The implementation:
 
 1. Parse the namespace identifier
 2. Check if the namespace exists (handle SKIP mode if not)
-3. For RESTRICT behavior: verify the namespace is empty (no child namespaces or tables)
-4. For CASCADE behavior: recursively drop all child objects first
-5. Drop the catalog or database from HMS
+3. Verify the namespace is empty (no child namespaces or tables)
+4. Drop the catalog or database from HMS
 
 **Error Handling:**
 
-If the namespace does not exist and mode is FAIL, return error code `1` (NamespaceNotFound). If the namespace is not empty and behavior is RESTRICT, return error code `3` (NamespaceNotEmpty). If the HMS connection fails, return error code `17` (ServiceUnavailable).
+If the namespace does not exist and mode is FAIL, return error code `1` (NamespaceNotFound).
+
+If the namespace is not empty, return error code `3` (NamespaceNotEmpty).
+
+If the HMS connection fails, return error code `17` (ServiceUnavailable).
 
 ### DeclareTable
 
@@ -139,18 +142,22 @@ If the namespace does not exist, return error code `1` (NamespaceNotFound). If t
 
 ### DescribeTable
 
-Retrieves metadata for a Lance table.
+Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. When `load_detailed_metadata=false`, only the table location and storage_options are returned; other fields (version, table_uri, schema, stats) are null.
 
 The implementation:
 
 1. Parse the table identifier
 2. Retrieve the Table object from HMS
 3. Validate that it is a Lance table (check `table_type=lance`)
-4. Return the table location and properties
+4. Return the table location from `storageDescriptor.location` and storage_options from `parameters`
 
 **Error Handling:**
 
-If the table does not exist, return error code `4` (TableNotFound). If the table is not a Lance table, return error code `13` (InvalidInput). If the HMS connection fails, return error code `17` (ServiceUnavailable).
+If the table does not exist, return error code `4` (TableNotFound).
+
+If the table is not a Lance table, return error code `13` (InvalidInput).
+
+If the HMS connection fails, return error code `17` (ServiceUnavailable).
 
 ### DeregisterTable
 

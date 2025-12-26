@@ -94,7 +94,7 @@ If the namespace does not exist, return error code `1` (NamespaceNotFound). If t
 
 ### DropNamespace
 
-Removes a namespace from Polaris.
+Removes a namespace from Polaris. Only RESTRICT mode is supported; CASCADE mode is not implemented.
 
 The implementation:
 
@@ -103,7 +103,11 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the namespace is not empty, return error code `3` (NamespaceNotEmpty). If the server returns an error, return error code `18` (Internal).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the namespace is not empty, return error code `3` (NamespaceNotEmpty).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DeclareTable
 
@@ -141,18 +145,22 @@ If the namespace does not exist, return error code `1` (NamespaceNotFound). If t
 
 ### DescribeTable
 
-Retrieves metadata for a Lance table.
+Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. When `load_detailed_metadata=false`, only the table location and storage_options are returned; other fields (version, table_uri, schema, stats) are null.
 
 The implementation:
 
 1. Parse the table identifier to extract namespace and table name
 2. GET `/namespaces/{namespace}/generic-tables/{table}`
 3. Verify the table format is `lance`
-4. Return the table location, properties, and optional doc as comment
+4. Return the table location from `base-location` and storage_options from `properties`
 
 **Error Handling:**
 
-If the table does not exist, return error code `4` (TableNotFound). If the table format is not `lance`, return error code `13` (InvalidInput). If the server returns an error, return error code `18` (Internal).
+If the table does not exist, return error code `4` (TableNotFound).
+
+If the table format is not `lance`, return error code `13` (InvalidInput).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DeregisterTable
 

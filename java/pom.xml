@@ -57,8 +57,8 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <lance-core.version>1.0.0-beta.10</lance-core.version>
-        <lance-namespace-client.version>0.0.21</lance-namespace-client.version>
+        <lance-core.version>2.0.0-beta.4</lance-core.version>
+        <lance-namespace.version>0.4.0</lance-namespace.version>
         <arrow.version>15.0.0</arrow.version>
         <junit-version>5.8.2</junit-version>
 
@@ -86,6 +86,7 @@
     </properties>
 
     <modules>
+        <module>lance-namespace-impls-core</module>
         <module>lance-namespace-glue</module>
         <module>lance-namespace-hive2</module>
         <module>lance-namespace-hive3</module>
@@ -98,13 +99,23 @@
         <dependencies>
             <dependency>
                 <groupId>org.lance</groupId>
+                <artifactId>lance-namespace-impls-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.lance</groupId>
                 <artifactId>lance-core</artifactId>
                 <version>${lance-core.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.lance</groupId>
+                <artifactId>lance-namespace-core</artifactId>
+                <version>${lance-namespace.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.lance</groupId>
                 <artifactId>lance-namespace-apache-client</artifactId>
-                <version>${lance-namespace-client.version}</version>
+                <version>${lance-namespace.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.arrow</groupId>

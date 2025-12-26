@@ -13,9 +13,6 @@
  */
 package org.lance.namespace.glue;
 
-import org.lance.namespace.util.OpenDalUtil;
-import org.lance.namespace.util.PropertyUtil;
-
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableMap;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -28,6 +25,7 @@ import software.amazon.awssdk.services.glue.GlueClientBuilder;
 
 import java.io.Serializable;
 import java.net.URI;
+import java.util.HashMap;
 import java.util.Map;
 
 public class GlueNamespaceConfig implements Serializable {
@@ -112,10 +110,23 @@ public class GlueNamespaceConfig implements Serializable {
     this.accessKeyId = properties.get(ACCESS_KEY_ID);
     this.secretAccessKey = properties.get(SECRET_ACCESS_KEY);
     this.sessionToken = properties.get(SESSION_TOKEN);
-    this.storageOptions = PropertyUtil.propertiesWithPrefix(properties, STORAGE_OPTIONS_PREFIX);
+
+    // Inline PropertyUtil.propertiesWithPrefix
+    Map<String, String> filteredStorageOptions = new HashMap<>();
+    for (Map.Entry<String, String> entry : properties.entrySet()) {
+      if (entry.getKey().startsWith(STORAGE_OPTIONS_PREFIX)) {
+        filteredStorageOptions.put(
+            entry.getKey().substring(STORAGE_OPTIONS_PREFIX.length()), entry.getValue());
+      }
+    }
+    this.storageOptions = filteredStorageOptions;
+
+    // Inline PropertyUtil.propertyAsString and OpenDalUtil.stripTrailingSlash
+    String rootValue = properties.getOrDefault(ROOT, ROOT_DEFAULT);
     this.root =
-        OpenDalUtil.stripTrailingSlash(
-            PropertyUtil.propertyAsString(properties, ROOT, ROOT_DEFAULT));
+        rootValue != null && rootValue.endsWith("/")
+            ? rootValue.substring(0, rootValue.length() - 1)
+            : rootValue;
   }
 
   public String catalogId() {

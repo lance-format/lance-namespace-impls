@@ -13,9 +13,9 @@ class MockNamespace(LanceNamespace):
         return "MockNamespace { }"
 
 def test_connect_with_short_name_rest():
-    with patch('lance_namespace.namespace.importlib.import_module') as mock_import:
+    with patch('lance_namespace.importlib.import_module') as mock_import:
         mock_module = Mock()
-        mock_module.LanceRestNamespace = MockNamespace
+        mock_module.RestNamespace = MockNamespace
         mock_import.return_value = mock_module
 
         ns = connect("rest", {"uri": "http://localhost:8080"})
@@ -25,7 +25,7 @@ def test_connect_with_short_name_rest():
 
 
 def test_connect_with_full_class_path():
-    with patch('lance_namespace.namespace.importlib.import_module') as mock_import:
+    with patch('lance_namespace.importlib.import_module') as mock_import:
         mock_module = Mock()
         mock_module.CustomNamespace = MockNamespace
         mock_import.return_value = mock_module
@@ -37,7 +37,7 @@ def test_connect_with_full_class_path():
 
 
 def test_connect_invalid_implementation():
-    with patch('lance_namespace.namespace.importlib.import_module') as mock_import:
+    with patch('lance_namespace.importlib.import_module') as mock_import:
         mock_import.side_effect = ImportError("Module not found")
 
         with pytest.raises(ValueError) as exc_info:
@@ -47,7 +47,7 @@ def test_connect_invalid_implementation():
 
 
 def test_connect_non_namespace_class():
-    with patch('lance_namespace.namespace.importlib.import_module') as mock_import:
+    with patch('lance_namespace.importlib.import_module') as mock_import:
         mock_module = Mock()
         mock_module.NotANamespace = str
         mock_import.return_value = mock_module
@@ -58,7 +58,8 @@ def test_connect_non_namespace_class():
         assert "does not implement LanceNamespace interface" in str(exc_info.value)
 
 
-def test_default_methods_raise_not_implemented():
+def test_default_methods_raise_unsupported():
+    from lance_namespace import UnsupportedOperationError
     from lance_namespace_urllib3_client.models import (
         ListNamespacesRequest,
         DescribeNamespaceRequest,
@@ -67,11 +68,11 @@ def test_default_methods_raise_not_implemented():
 
     ns = MockNamespace()
 
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(UnsupportedOperationError):
         ns.list_namespaces(ListNamespacesRequest())
 
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(UnsupportedOperationError):
         ns.describe_namespace(DescribeNamespaceRequest())
 
-    with pytest.raises(NotImplementedError):
-        ns.create_namespace(CreateNamespaceRequest())
+    with pytest.raises(UnsupportedOperationError):
+        ns.create_namespace(CreateNamespaceRequest(id=["test"]))
