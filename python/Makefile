@@ -156,3 +156,7 @@ integ-test-polaris:
 .PHONY: integ-test-unity
 integ-test-unity:
 	uv run pytest tests/test_unity_integration.py -v
+
+.PHONY: integ-test-iceberg
+integ-test-iceberg:
+	uv run pytest tests/test_iceberg_integration.py -v

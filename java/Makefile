@@ -76,7 +76,7 @@ build-iceberg:
 
 .PHONY: test-iceberg
 test-iceberg:
-	./mvnw test -pl lance-namespace-iceberg
+	./mvnw test -pl lance-namespace-iceberg -Dtest="!*IntegrationTest"
 
 # ============================================================================
 # Polaris
@@ -152,6 +152,10 @@ integ-test-hive3:
 .PHONY: integ-test-polaris
 integ-test-polaris:
 	./mvnw test -pl lance-namespace-polaris -Dtest="*Integration" -DfailIfNoTests=false
+
+.PHONY: integ-test-iceberg
+integ-test-iceberg:
+	./mvnw test -pl lance-namespace-iceberg -Dtest="*Integration" -DfailIfNoTests=false
 
 .PHONY: integ-test-unity
 integ-test-unity:

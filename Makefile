@@ -100,7 +100,7 @@ docker-logs:
 	cd docker && make logs
 
 # Individual catalog docker targets
-.PHONY: docker-up-hive2 docker-up-hive3 docker-up-polaris docker-up-unity
+.PHONY: docker-up-hive2 docker-up-hive3 docker-up-polaris docker-up-unity docker-up-iceberg
 docker-up-hive2:
 	cd docker && make up-hive2
 docker-up-hive3:
@@ -109,8 +109,10 @@ docker-up-polaris:
 	cd docker && make up-polaris
 docker-up-unity:
 	cd docker && make up-unity
+docker-up-iceberg:
+	cd docker && make up-iceberg
 
-.PHONY: docker-down-hive2 docker-down-hive3 docker-down-polaris docker-down-unity
+.PHONY: docker-down-hive2 docker-down-hive3 docker-down-polaris docker-down-unity docker-down-iceberg
 docker-down-hive2:
 	cd docker && make down-hive2
 docker-down-hive3:
@@ -119,6 +121,8 @@ docker-down-polaris:
 	cd docker && make down-polaris
 docker-down-unity:
 	cd docker && make down-unity
+docker-down-iceberg:
+	cd docker && make down-iceberg
 
 # ============================================================================
 # Java Integration test targets
@@ -139,6 +143,10 @@ java-integ-test-hive3:
 .PHONY: java-integ-test-polaris
 java-integ-test-polaris:
 	cd java && make integ-test-polaris
+
+.PHONY: java-integ-test-iceberg
+java-integ-test-iceberg:
+	cd java && make integ-test-iceberg
 
 .PHONY: java-integ-test-unity
 java-integ-test-unity:
@@ -171,3 +179,7 @@ python-integ-test-polaris:
 .PHONY: python-integ-test-unity
 python-integ-test-unity:
 	cd python && make integ-test-unity
+
+.PHONY: python-integ-test-iceberg
+python-integ-test-iceberg:
+	cd python && make integ-test-iceberg

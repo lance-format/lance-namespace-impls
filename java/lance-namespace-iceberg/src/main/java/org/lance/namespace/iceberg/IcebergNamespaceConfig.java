@@ -97,4 +97,8 @@ public class IcebergNamespaceConfig {
     }
     return base;
   }
+
+  public String getBaseApiUrl() {
+    return endpoint.endsWith("/") ? endpoint.substring(0, endpoint.length() - 1) : endpoint;
+  }
 }

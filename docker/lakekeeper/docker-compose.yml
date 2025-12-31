@@ -1,0 +1,162 @@
+services:
+  postgres-lakekeeper:
+    image: postgres:17
+    container_name: postgres-lakekeeper
+    environment:
+      POSTGRES_USER: lakekeeper
+      POSTGRES_PASSWORD: lakekeeper
+      POSTGRES_DB: lakekeeper
+    ports:
+      - "5435:5432"
+    volumes:
+      - lakekeeper-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lakekeeper -d lakekeeper"]
+      interval: 2s
+      timeout: 10s
+      retries: 5
+    networks:
+      - lakekeeper-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio-lakekeeper
+    environment:
+      MINIO_ROOT_USER: minio-root-user
+      MINIO_ROOT_PASSWORD: minio-root-password
+      MINIO_DOMAIN: minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    volumes:
+      - lakekeeper-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 10s
+      retries: 5
+    networks:
+      - lakekeeper-network
+
+  minio-setup:
+    image: minio/mc:latest
+    container_name: minio-setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set myminio http://minio:9000 minio-root-user minio-root-password &&
+        mc mb myminio/warehouse --ignore-existing &&
+        echo 'MinIO bucket created'
+      "
+    networks:
+      - lakekeeper-network
+
+  lakekeeper-migrate:
+    image: quay.io/lakekeeper/catalog:latest-main
+    container_name: lakekeeper-migrate
+    depends_on:
+      postgres-lakekeeper:
+        condition: service_healthy
+    environment:
+      - LAKEKEEPER__PG_ENCRYPTION_KEY=test-encryption-key-not-secure
+      - LAKEKEEPER__PG_DATABASE_URL_READ=postgresql://lakekeeper:lakekeeper@postgres-lakekeeper:5432/lakekeeper
+      - LAKEKEEPER__PG_DATABASE_URL_WRITE=postgresql://lakekeeper:lakekeeper@postgres-lakekeeper:5432/lakekeeper
+    restart: "no"
+    command: ["migrate"]
+    networks:
+      - lakekeeper-network
+
+  lakekeeper:
+    image: quay.io/lakekeeper/catalog:latest-main
+    container_name: lakekeeper
+    depends_on:
+      lakekeeper-migrate:
+        condition: service_completed_successfully
+      minio-setup:
+        condition: service_completed_successfully
+    environment:
+      - LAKEKEEPER__PG_ENCRYPTION_KEY=test-encryption-key-not-secure
+      - LAKEKEEPER__PG_DATABASE_URL_READ=postgresql://lakekeeper:lakekeeper@postgres-lakekeeper:5432/lakekeeper
+      - LAKEKEEPER__PG_DATABASE_URL_WRITE=postgresql://lakekeeper:lakekeeper@postgres-lakekeeper:5432/lakekeeper
+      - LAKEKEEPER__AUTHZ_BACKEND=allowall
+      - RUST_LOG=info
+    command: ["serve"]
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 2s
+      timeout: 10s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "8282:8181"
+    networks:
+      - lakekeeper-network
+
+  lakekeeper-bootstrap:
+    image: curlimages/curl
+    container_name: lakekeeper-bootstrap
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+    restart: "no"
+    command:
+      - -w
+      - "%{http_code}"
+      - "-X"
+      - "POST"
+      - "-v"
+      - "http://lakekeeper:8181/management/v1/bootstrap"
+      - "-H"
+      - "Content-Type: application/json"
+      - "--data"
+      - '{"accept-terms-of-use": true}'
+      - "-o"
+      - "/dev/null"
+    networks:
+      - lakekeeper-network
+
+  lakekeeper-setup:
+    image: curlimages/curl
+    container_name: lakekeeper-setup
+    depends_on:
+      lakekeeper-bootstrap:
+        condition: service_completed_successfully
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Creating test_warehouse..."
+        curl -sf -X POST "http://lakekeeper:8181/management/v1/warehouse" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "warehouse-name": "test_warehouse",
+            "project-id": "00000000-0000-0000-0000-000000000000",
+            "storage-profile": {
+              "type": "s3",
+              "bucket": "warehouse",
+              "endpoint": "http://minio:9000",
+              "region": "us-east-1",
+              "path-style-access": true,
+              "flavor": "minio",
+              "sts-enabled": false
+            },
+            "storage-credential": {
+              "type": "s3",
+              "credential-type": "access-key",
+              "aws-access-key-id": "minio-root-user",
+              "aws-secret-access-key": "minio-root-password"
+            }
+          }' && echo "Warehouse created successfully" || echo "Failed to create warehouse"
+    networks:
+      - lakekeeper-network
+
+volumes:
+  lakekeeper-postgres-data:
+  lakekeeper-minio-data:
+
+networks:
+  lakekeeper-network:
+    driver: bridge

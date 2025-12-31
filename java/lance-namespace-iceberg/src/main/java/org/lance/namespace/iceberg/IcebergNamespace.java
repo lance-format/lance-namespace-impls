@@ -60,7 +60,18 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-/** Iceberg REST Catalog namespace implementation for Lance. */
+/**
+ * Iceberg REST Catalog namespace implementation for Lance.
+ *
+ * <p>The prefix (warehouse) is included in the namespace identifier:
+ *
+ * <ul>
+ *   <li>Namespace ID format: [prefix, namespace1, namespace2, ...]
+ *   <li>Table ID format: [prefix, namespace1, namespace2, ..., table_name]
+ * </ul>
+ *
+ * <p>This is consistent with how Polaris handles catalog names.
+ */
 public class IcebergNamespace implements LanceNamespace, Closeable {
   private static final Logger LOG = LoggerFactory.getLogger(IcebergNamespace.class);
   private static final String TABLE_TYPE_LANCE = "lance";
@@ -70,6 +81,7 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
   private IcebergNamespaceConfig config;
   private RestClient restClient;
   private BufferAllocator allocator;
+  private final Map<String, String> prefixCache = new HashMap<>();
 
   public IcebergNamespace() {}
 
@@ -80,7 +92,7 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
 
     RestClient.Builder clientBuilder =
         RestClient.builder()
-            .baseUrl(config.getFullApiUrl())
+            .baseUrl(config.getBaseApiUrl())
             .connectTimeout(config.getConnectTimeout(), TimeUnit.MILLISECONDS)
             .readTimeout(config.getReadTimeout(), TimeUnit.MILLISECONDS)
             .maxRetries(config.getMaxRetries());
@@ -101,6 +113,37 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
     return String.format("IcebergNamespace { endpoint: \"%s\" }", config.getEndpoint());
   }
 
+  private String resolvePrefix(String warehouse) {
+    if (prefixCache.containsKey(warehouse)) {
+      return prefixCache.get(warehouse);
+    }
+
+    try {
+      Map<String, String> params = new HashMap<>();
+      params.put("warehouse", warehouse);
+      IcebergModels.ConfigResponse response =
+          restClient.get("/v1/config", params, IcebergModels.ConfigResponse.class);
+      if (response != null
+          && response.getDefaults() != null
+          && response.getDefaults().get("prefix") != null) {
+        String prefix = response.getDefaults().get("prefix");
+        prefixCache.put(warehouse, prefix);
+        LOG.debug("Resolved warehouse '{}' to prefix '{}'", warehouse, prefix);
+        return prefix;
+      }
+    } catch (Exception e) {
+      LOG.debug("Failed to resolve prefix for warehouse '{}': {}", warehouse, e.getMessage());
+    }
+
+    prefixCache.put(warehouse, warehouse);
+    return warehouse;
+  }
+
+  private String getPrefixPath(String warehouse) {
+    String prefix = resolvePrefix(warehouse);
+    return "/v1/" + prefix;
+  }
+
   @Override
   public ListNamespacesResponse listNamespaces(ListNamespacesRequest request) {
     ObjectIdentifier nsId =
@@ -108,10 +151,20 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
             ? ObjectIdentifier.of(request.getId())
             : ObjectIdentifier.of(Collections.emptyList());
 
+    ValidationUtil.checkArgument(
+        nsId.levels() >= 1, "Must specify at least the prefix (warehouse)");
+
     try {
+      String prefix = nsId.levelAtListPos(0);
+      List<String> parentNs =
+          nsId.levels() > 1
+              ? nsId.listStyleId().subList(1, nsId.levels())
+              : Collections.emptyList();
+      String prefixPath = getPrefixPath(prefix);
+
       Map<String, String> params = new HashMap<>();
-      if (nsId.levels() > 0) {
-        String parent = encodeNamespace(nsId.listStyleId());
+      if (!parentNs.isEmpty()) {
+        String parent = encodeNamespace(parentNs);
         params.put("parent", parent);
       }
       if (request.getPageToken() != null) {
@@ -120,14 +173,19 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
 
       IcebergModels.ListNamespacesResponse response =
           params.isEmpty()
-              ? restClient.get("/namespaces", IcebergModels.ListNamespacesResponse.class)
-              : restClient.get("/namespaces", params, IcebergModels.ListNamespacesResponse.class);
+              ? restClient.get(
+                  prefixPath + "/namespaces", IcebergModels.ListNamespacesResponse.class)
+              : restClient.get(
+                  prefixPath + "/namespaces", params, IcebergModels.ListNamespacesResponse.class);
 
       List<String> namespaces = new ArrayList<>();
       if (response != null && response.getNamespaces() != null) {
         for (List<String> ns : response.getNamespaces()) {
           if (!ns.isEmpty()) {
-            namespaces.add(ns.get(ns.size() - 1));
+            List<String> fullNs = new ArrayList<>();
+            fullNs.add(prefix);
+            fullNs.addAll(ns);
+            namespaces.add(String.join(".", fullNs));
           }
         }
       }
@@ -146,19 +204,26 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
   @Override
   public CreateNamespaceResponse createNamespace(CreateNamespaceRequest request) {
     ObjectIdentifier nsId = ObjectIdentifier.of(request.getId());
-    ValidationUtil.checkArgument(nsId.levels() >= 1, "Namespace must have at least one level");
+    ValidationUtil.checkArgument(
+        nsId.levels() >= 2, "Namespace must have at least prefix and namespace levels");
 
     try {
+      String prefix = nsId.levelAtListPos(0);
+      List<String> namespace = nsId.listStyleId().subList(1, nsId.levels());
+      String prefixPath = getPrefixPath(prefix);
+
       IcebergModels.CreateNamespaceRequest createRequest =
           new IcebergModels.CreateNamespaceRequest();
-      createRequest.setNamespace(nsId.listStyleId());
+      createRequest.setNamespace(namespace);
       createRequest.setProperties(request.getProperties());
 
       IcebergModels.CreateNamespaceResponse response =
           restClient.post(
-              "/namespaces", createRequest, IcebergModels.CreateNamespaceResponse.class);
+              prefixPath + "/namespaces",
+              createRequest,
+              IcebergModels.CreateNamespaceResponse.class);
 
-      LOG.info("Created namespace: {}", nsId.stringStyleId());
+      LOG.info("Created namespace: {}.{}", prefix, String.join(".", namespace));
 
       CreateNamespaceResponse result = new CreateNamespaceResponse();
       result.setProperties(response != null ? response.getProperties() : null);
@@ -175,12 +240,19 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
   @Override
   public DescribeNamespaceResponse describeNamespace(DescribeNamespaceRequest request) {
     ObjectIdentifier nsId = ObjectIdentifier.of(request.getId());
-    ValidationUtil.checkArgument(nsId.levels() >= 1, "Namespace must have at least one level");
+    ValidationUtil.checkArgument(
+        nsId.levels() >= 2, "Namespace must have at least prefix and namespace levels");
 
     try {
-      String namespacePath = encodeNamespace(nsId.listStyleId());
+      String prefix = nsId.levelAtListPos(0);
+      List<String> namespace = nsId.listStyleId().subList(1, nsId.levels());
+      String prefixPath = getPrefixPath(prefix);
+      String namespacePath = encodeNamespace(namespace);
+
       IcebergModels.GetNamespaceResponse response =
-          restClient.get("/namespaces/" + namespacePath, IcebergModels.GetNamespaceResponse.class);
+          restClient.get(
+              prefixPath + "/namespaces/" + namespacePath,
+              IcebergModels.GetNamespaceResponse.class);
 
       DescribeNamespaceResponse result = new DescribeNamespaceResponse();
       result.setProperties(response != null ? response.getProperties() : null);
@@ -201,12 +273,17 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
   @Override
   public DropNamespaceResponse dropNamespace(DropNamespaceRequest request) {
     ObjectIdentifier nsId = ObjectIdentifier.of(request.getId());
-    ValidationUtil.checkArgument(nsId.levels() >= 1, "Namespace must have at least one level");
+    ValidationUtil.checkArgument(
+        nsId.levels() >= 2, "Namespace must have at least prefix and namespace levels");
 
     try {
-      String namespacePath = encodeNamespace(nsId.listStyleId());
-      restClient.delete("/namespaces/" + namespacePath);
-      LOG.info("Dropped namespace: {}", nsId.stringStyleId());
+      String prefix = nsId.levelAtListPos(0);
+      List<String> namespace = nsId.listStyleId().subList(1, nsId.levels());
+      String prefixPath = getPrefixPath(prefix);
+      String namespacePath = encodeNamespace(namespace);
+
+      restClient.delete(prefixPath + "/namespaces/" + namespacePath);
+      LOG.info("Dropped namespace: {}.{}", prefix, String.join(".", namespace));
       return new DropNamespaceResponse();
     } catch (RestClientException e) {
       if (e.isNotFound()) {
@@ -219,10 +296,14 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
   @Override
   public ListTablesResponse listTables(ListTablesRequest request) {
     ObjectIdentifier nsId = ObjectIdentifier.of(request.getId());
-    ValidationUtil.checkArgument(nsId.levels() >= 1, "Namespace must have at least one level");
+    ValidationUtil.checkArgument(nsId.levels() >= 2, "Must specify at least prefix and namespace");
 
     try {
-      String namespacePath = encodeNamespace(nsId.listStyleId());
+      String prefix = nsId.levelAtListPos(0);
+      List<String> namespace = nsId.listStyleId().subList(1, nsId.levels());
+      String prefixPath = getPrefixPath(prefix);
+      String namespacePath = encodeNamespace(namespace);
+
       Map<String, String> params = new HashMap<>();
       if (request.getPageToken() != null) {
         params.put("pageToken", request.getPageToken());
@@ -231,17 +312,17 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
       IcebergModels.ListTablesResponse response =
           params.isEmpty()
               ? restClient.get(
-                  "/namespaces/" + namespacePath + "/tables",
+                  prefixPath + "/namespaces/" + namespacePath + "/tables",
                   IcebergModels.ListTablesResponse.class)
               : restClient.get(
-                  "/namespaces/" + namespacePath + "/tables",
+                  prefixPath + "/namespaces/" + namespacePath + "/tables",
                   params,
                   IcebergModels.ListTablesResponse.class);
 
       List<String> tables = new ArrayList<>();
       if (response != null && response.getIdentifiers() != null) {
         for (IcebergModels.TableIdentifier tableId : response.getIdentifiers()) {
-          if (isLanceTable(nsId.listStyleId(), tableId.getName())) {
+          if (isLanceTable(prefix, namespace, tableId.getName())) {
             tables.add(tableId.getName());
           }
         }
@@ -265,15 +346,19 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
   public CreateEmptyTableResponse createEmptyTable(CreateEmptyTableRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
-        tableId.levels() >= 2, "Table identifier must have at least namespace and table name");
+        tableId.levels() >= 3, "Table identifier must have prefix, namespace, and table name");
 
-    List<String> namespace = tableId.listStyleId().subList(0, tableId.levels() - 1);
+    String prefix = tableId.levelAtListPos(0);
+    List<String> namespace = tableId.listStyleId().subList(1, tableId.levels() - 1);
     String tableName = tableId.levelAtListPos(tableId.levels() - 1);
 
     try {
+      String prefixPath = getPrefixPath(prefix);
+
       String tablePath = request.getLocation();
       if (tablePath == null || tablePath.isEmpty()) {
-        tablePath = config.getRoot() + "/" + String.join("/", namespace) + "/" + tableName;
+        List<String> pathParts = tableId.listStyleId().subList(0, tableId.levels() - 1);
+        tablePath = config.getRoot() + "/" + String.join("/", pathParts) + "/" + tableName;
       }
 
       IcebergModels.CreateTableRequest createRequest = new IcebergModels.CreateTableRequest();
@@ -288,11 +373,11 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
       String namespacePath = encodeNamespace(namespace);
       IcebergModels.LoadTableResponse response =
           restClient.post(
-              "/namespaces/" + namespacePath + "/tables",
+              prefixPath + "/namespaces/" + namespacePath + "/tables",
               createRequest,
               IcebergModels.LoadTableResponse.class);
 
-      LOG.info("Created Lance table: {}.{}", namespacePath, tableName);
+      LOG.info("Created Lance table: {}", tableId.stringStyleId());
 
       CreateEmptyTableResponse result = new CreateEmptyTableResponse();
       result.setLocation(tablePath);
@@ -302,7 +387,8 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
         throw new TableAlreadyExistsException("Table already exists: " + tableId.stringStyleId());
       }
       if (e.isNotFound()) {
-        throw new NamespaceNotFoundException("Namespace not found: " + String.join(".", namespace));
+        throw new NamespaceNotFoundException(
+            "Namespace not found: " + prefix + "." + String.join(".", namespace));
       }
       throw new InternalException("Failed to create table: " + e.getMessage());
     }
@@ -312,18 +398,20 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
   public DescribeTableResponse describeTable(DescribeTableRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
-        tableId.levels() >= 2, "Table identifier must have at least namespace and table name");
+        tableId.levels() >= 3, "Table identifier must have prefix, namespace, and table name");
 
-    List<String> namespace = tableId.listStyleId().subList(0, tableId.levels() - 1);
+    String prefix = tableId.levelAtListPos(0);
+    List<String> namespace = tableId.listStyleId().subList(1, tableId.levels() - 1);
     String tableName = tableId.levelAtListPos(tableId.levels() - 1);
 
     try {
+      String prefixPath = getPrefixPath(prefix);
       String namespacePath = encodeNamespace(namespace);
       String encodedTableName = urlEncode(tableName);
 
       IcebergModels.LoadTableResponse response =
           restClient.get(
-              "/namespaces/" + namespacePath + "/tables/" + encodedTableName,
+              prefixPath + "/namespaces/" + namespacePath + "/tables/" + encodedTableName,
               IcebergModels.LoadTableResponse.class);
 
       if (response == null || response.getMetadata() == null) {
@@ -359,18 +447,20 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
   public DeregisterTableResponse deregisterTable(DeregisterTableRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
-        tableId.levels() >= 2, "Table identifier must have at least namespace and table name");
+        tableId.levels() >= 3, "Table identifier must have prefix, namespace, and table name");
 
-    List<String> namespace = tableId.listStyleId().subList(0, tableId.levels() - 1);
+    String prefix = tableId.levelAtListPos(0);
+    List<String> namespace = tableId.listStyleId().subList(1, tableId.levels() - 1);
     String tableName = tableId.levelAtListPos(tableId.levels() - 1);
 
     try {
+      String prefixPath = getPrefixPath(prefix);
       String namespacePath = encodeNamespace(namespace);
       String encodedTableName = urlEncode(tableName);
 
       IcebergModels.LoadTableResponse getResponse =
           restClient.get(
-              "/namespaces/" + namespacePath + "/tables/" + encodedTableName,
+              prefixPath + "/namespaces/" + namespacePath + "/tables/" + encodedTableName,
               IcebergModels.LoadTableResponse.class);
 
       String location = null;
@@ -378,8 +468,9 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
         location = getResponse.getMetadata().getLocation();
       }
 
-      restClient.delete("/namespaces/" + namespacePath + "/tables/" + encodedTableName);
-      LOG.info("Deregistered table: {}.{}", namespacePath, tableName);
+      restClient.delete(
+          prefixPath + "/namespaces/" + namespacePath + "/tables/" + encodedTableName);
+      LOG.info("Deregistered table: {}", tableId.stringStyleId());
 
       DeregisterTableResponse result = new DeregisterTableResponse();
       result.setLocation(location);
@@ -415,14 +506,15 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
     }
   }
 
-  private boolean isLanceTable(List<String> namespace, String tableName) {
+  private boolean isLanceTable(String prefix, List<String> namespace, String tableName) {
     try {
+      String prefixPath = getPrefixPath(prefix);
       String namespacePath = encodeNamespace(namespace);
       String encodedTableName = urlEncode(tableName);
 
       IcebergModels.LoadTableResponse response =
           restClient.get(
-              "/namespaces/" + namespacePath + "/tables/" + encodedTableName,
+              prefixPath + "/namespaces/" + namespacePath + "/tables/" + encodedTableName,
               IcebergModels.LoadTableResponse.class);
 
       if (response != null && response.getMetadata() != null) {
