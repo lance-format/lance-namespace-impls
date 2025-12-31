@@ -336,8 +336,8 @@ public class UnityNamespace implements LanceNamespace, Closeable {
       List<UnityModels.ColumnInfo> columns = new ArrayList<>();
       UnityModels.ColumnInfo idColumn = new UnityModels.ColumnInfo();
       idColumn.setName("__placeholder_id");
-      idColumn.setTypeText("BIGINT");
-      idColumn.setTypeName("BIGINT");
+      idColumn.setTypeText("LONG");
+      idColumn.setTypeName("LONG");
       idColumn.setTypeJson("{\"type\":\"long\"}");
       idColumn.setPosition(0);
       idColumn.setNullable(true);
@@ -490,7 +490,7 @@ public class UnityNamespace implements LanceNamespace, Closeable {
       if (intType.getBitWidth() == 32) {
         return "INT";
       } else if (intType.getBitWidth() == 64) {
-        return "BIGINT";
+        return "LONG";
       }
     } else if (arrowType instanceof ArrowType.FloatingPoint) {
       ArrowType.FloatingPoint fpType = (ArrowType.FloatingPoint) arrowType;
