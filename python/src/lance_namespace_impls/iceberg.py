@@ -8,14 +8,11 @@ For example: [warehouse_name, namespace1, namespace2, ..., table_name]
 
 import logging
 import urllib.parse
-import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from lance.namespace import LanceNamespace
 from lance_namespace_urllib3_client.models import (
-    CreateEmptyTableRequest,
-    CreateEmptyTableResponse,
     CreateNamespaceRequest,
     CreateNamespaceResponse,
     DeclareTableRequest,
@@ -463,25 +460,6 @@ class IcebergNamespace(LanceNamespace):
             raise
         except Exception as e:
             raise InternalException(f"Failed to declare table: {e}")
-
-    def create_empty_table(
-        self, request: CreateEmptyTableRequest
-    ) -> CreateEmptyTableResponse:
-        """Create an empty table (metadata only operation).
-
-        .. deprecated::
-            Use :meth:`declare_table` instead.
-        """
-        warnings.warn(
-            "create_empty_table is deprecated, use declare_table instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        declare_request = DeclareTableRequest()
-        declare_request.id = request.id
-        declare_request.location = request.location
-        response = self.declare_table(declare_request)
-        return CreateEmptyTableResponse(location=response.location)
 
     def describe_table(self, request: DescribeTableRequest) -> DescribeTableResponse:
         """Describe a table.

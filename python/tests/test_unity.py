@@ -23,7 +23,7 @@ from lance_namespace_urllib3_client.models import (
     DescribeNamespaceRequest,
     DropNamespaceRequest,
     ListTablesRequest,
-    CreateEmptyTableRequest,
+    DeclareTableRequest,
     DescribeTableRequest,
 )
 
@@ -302,8 +302,8 @@ class TestUnityNamespace(unittest.TestCase):
         self.assertEqual(sorted(response.tables), ["table1", "table3"])
 
     @patch("lance_namespace_impls.unity.RestClient")
-    def test_create_empty_table(self, mock_rest_client_class):
-        """Test creating an empty table."""
+    def test_declare_table(self, mock_rest_client_class):
+        """Test declaring a table."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
 
@@ -321,10 +321,10 @@ class TestUnityNamespace(unittest.TestCase):
 
         namespace = UnityNamespace(**self.properties)
 
-        request = CreateEmptyTableRequest()
+        request = DeclareTableRequest()
         request.id = ["test_catalog", "test_schema", "test_table"]
 
-        response = namespace.create_empty_table(request)
+        response = namespace.declare_table(request)
 
         self.assertEqual(
             response.location, "/data/lance/test_catalog/test_schema/test_table"

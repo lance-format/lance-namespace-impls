@@ -18,8 +18,8 @@ import pytest
 
 from lance_namespace_impls.iceberg import IcebergNamespace
 from lance_namespace_urllib3_client.models import (
-    CreateEmptyTableRequest,
     CreateNamespaceRequest,
+    DeclareTableRequest,
     DeregisterTableRequest,
     DescribeNamespaceRequest,
     DescribeTableRequest,
@@ -120,12 +120,12 @@ class TestIcebergNamespaceIntegration(unittest.TestCase):
 
         table_name = f"test_table_{uuid.uuid4().hex[:8]}"
 
-        # Create empty table (DeclareTable)
-        create_request = CreateEmptyTableRequest()
+        # Declare table
+        create_request = DeclareTableRequest()
         create_request.id = [self.test_warehouse, self.test_namespace, table_name]
         create_request.location = f"s3://warehouse/{self.test_namespace}/{table_name}"
 
-        create_response = self.namespace.create_empty_table(create_request)
+        create_response = self.namespace.declare_table(create_request)
         self.assertIsNotNone(create_response.location)
 
         # Describe table
@@ -147,19 +147,19 @@ class TestIcebergNamespaceIntegration(unittest.TestCase):
         deregister_request.id = [self.test_warehouse, self.test_namespace, table_name]
         self.namespace.deregister_table(deregister_request)
 
-    def test_create_empty_table_with_location(self):
-        """Test creating an empty table with a specific location."""
+    def test_declare_table_with_location(self):
+        """Test declaring a table with a specific location."""
         # Create namespace first
         ns_request = CreateNamespaceRequest()
         ns_request.id = [self.test_warehouse, self.test_namespace]
         self.namespace.create_namespace(ns_request)
 
         table_name = "lance_table"
-        create_request = CreateEmptyTableRequest()
+        create_request = DeclareTableRequest()
         create_request.id = [self.test_warehouse, self.test_namespace, table_name]
         create_request.location = f"s3://warehouse/{self.test_namespace}/{table_name}"
 
-        response = self.namespace.create_empty_table(create_request)
+        response = self.namespace.declare_table(create_request)
         self.assertIsNotNone(response.location)
 
         # Clean up table

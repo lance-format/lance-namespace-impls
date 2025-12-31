@@ -24,7 +24,7 @@ from lance_namespace_urllib3_client.models import (
     DescribeNamespaceRequest,
     DropNamespaceRequest,
     ListTablesRequest,
-    CreateEmptyTableRequest,
+    DeclareTableRequest,
     DescribeTableRequest,
     DeregisterTableRequest,
 )
@@ -333,8 +333,8 @@ class TestIcebergNamespace(unittest.TestCase):
             namespace.list_tables(request)
 
     @patch("lance_namespace_impls.iceberg.RestClient")
-    def test_create_empty_table(self, mock_rest_client_class):
-        """Test creating an empty table."""
+    def test_declare_table(self, mock_rest_client_class):
+        """Test declaring a table."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
 
@@ -343,11 +343,11 @@ class TestIcebergNamespace(unittest.TestCase):
 
         namespace = IcebergNamespace(**self.properties)
 
-        request = CreateEmptyTableRequest()
+        request = DeclareTableRequest()
         request.id = ["warehouse1", "test_namespace", "test_table"]
         request.location = None
 
-        response = namespace.create_empty_table(request)
+        response = namespace.declare_table(request)
 
         self.assertEqual(
             response.location, "/data/lance/warehouse1/test_namespace/test_table"
@@ -355,8 +355,8 @@ class TestIcebergNamespace(unittest.TestCase):
         mock_client.post.assert_called_once()
 
     @patch("lance_namespace_impls.iceberg.RestClient")
-    def test_create_empty_table_with_location(self, mock_rest_client_class):
-        """Test creating an empty table with custom location."""
+    def test_declare_table_with_location(self, mock_rest_client_class):
+        """Test declaring a table with custom location."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
 
@@ -365,17 +365,17 @@ class TestIcebergNamespace(unittest.TestCase):
 
         namespace = IcebergNamespace(**self.properties)
 
-        request = CreateEmptyTableRequest()
+        request = DeclareTableRequest()
         request.id = ["warehouse1", "test_namespace", "test_table"]
         request.location = "/custom/path/test_table"
 
-        response = namespace.create_empty_table(request)
+        response = namespace.declare_table(request)
 
         self.assertEqual(response.location, "/custom/path/test_table")
 
     @patch("lance_namespace_impls.iceberg.RestClient")
-    def test_create_empty_table_already_exists(self, mock_rest_client_class):
-        """Test creating a table that already exists."""
+    def test_declare_table_already_exists(self, mock_rest_client_class):
+        """Test declaring a table that already exists."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
 
@@ -386,25 +386,25 @@ class TestIcebergNamespace(unittest.TestCase):
 
         namespace = IcebergNamespace(**self.properties)
 
-        request = CreateEmptyTableRequest()
+        request = DeclareTableRequest()
         request.id = ["warehouse1", "test_namespace", "existing_table"]
 
         with self.assertRaises(TableAlreadyExistsException):
-            namespace.create_empty_table(request)
+            namespace.declare_table(request)
 
     @patch("lance_namespace_impls.iceberg.RestClient")
-    def test_create_empty_table_invalid_id(self, mock_rest_client_class):
-        """Test creating table with invalid ID fails."""
+    def test_declare_table_invalid_id(self, mock_rest_client_class):
+        """Test declaring table with invalid ID fails."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
 
         namespace = IcebergNamespace(**self.properties)
 
-        request = CreateEmptyTableRequest()
+        request = DeclareTableRequest()
         request.id = ["warehouse1", "only_namespace"]
 
         with self.assertRaises(InvalidInputException):
-            namespace.create_empty_table(request)
+            namespace.declare_table(request)
 
     @patch("lance_namespace_impls.iceberg.RestClient")
     def test_describe_table(self, mock_rest_client_class):

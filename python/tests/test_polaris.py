@@ -23,7 +23,7 @@ from lance_namespace_urllib3_client.models import (
     DescribeNamespaceRequest,
     DropNamespaceRequest,
     ListTablesRequest,
-    CreateEmptyTableRequest,
+    DeclareTableRequest,
     DescribeTableRequest,
     DeregisterTableRequest,
 )
@@ -287,8 +287,8 @@ class TestPolarisNamespace(unittest.TestCase):
         )
 
     @patch("lance_namespace_impls.polaris.RestClient")
-    def test_create_empty_table(self, mock_rest_client_class):
-        """Test creating an empty table."""
+    def test_declare_table(self, mock_rest_client_class):
+        """Test declaring a table."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
 
@@ -296,11 +296,11 @@ class TestPolarisNamespace(unittest.TestCase):
 
         namespace = PolarisNamespace(**self.properties)
 
-        request = CreateEmptyTableRequest()
+        request = DeclareTableRequest()
         request.id = ["test_catalog", "test_namespace", "test_table"]
         request.location = None
 
-        response = namespace.create_empty_table(request)
+        response = namespace.declare_table(request)
 
         self.assertEqual(
             response.location, "/data/lance/test_catalog/test_namespace/test_table"
@@ -308,8 +308,8 @@ class TestPolarisNamespace(unittest.TestCase):
         mock_client.post.assert_called_once()
 
     @patch("lance_namespace_impls.polaris.RestClient")
-    def test_create_empty_table_with_location(self, mock_rest_client_class):
-        """Test creating an empty table with custom location."""
+    def test_declare_table_with_location(self, mock_rest_client_class):
+        """Test declaring a table with custom location."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
 
@@ -317,11 +317,11 @@ class TestPolarisNamespace(unittest.TestCase):
 
         namespace = PolarisNamespace(**self.properties)
 
-        request = CreateEmptyTableRequest()
+        request = DeclareTableRequest()
         request.id = ["test_catalog", "test_namespace", "test_table"]
         request.location = "/custom/path/test_table"
 
-        response = namespace.create_empty_table(request)
+        response = namespace.declare_table(request)
 
         self.assertEqual(response.location, "/custom/path/test_table")
         mock_client.post.assert_called_once_with(
@@ -335,8 +335,8 @@ class TestPolarisNamespace(unittest.TestCase):
         )
 
     @patch("lance_namespace_impls.polaris.RestClient")
-    def test_create_empty_table_already_exists(self, mock_rest_client_class):
-        """Test creating a table that already exists."""
+    def test_declare_table_already_exists(self, mock_rest_client_class):
+        """Test declaring a table that already exists."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
 
@@ -346,11 +346,11 @@ class TestPolarisNamespace(unittest.TestCase):
 
         namespace = PolarisNamespace(**self.properties)
 
-        request = CreateEmptyTableRequest()
+        request = DeclareTableRequest()
         request.id = ["test_catalog", "test_namespace", "existing_table"]
 
         with self.assertRaises(TableAlreadyExistsException):
-            namespace.create_empty_table(request)
+            namespace.declare_table(request)
 
     @patch("lance_namespace_impls.polaris.RestClient")
     def test_describe_table(self, mock_rest_client_class):
@@ -477,11 +477,11 @@ class TestPolarisNamespace(unittest.TestCase):
         """Test that table operations fail with invalid identifiers."""
         namespace = PolarisNamespace(**self.properties)
 
-        request = CreateEmptyTableRequest()
+        request = DeclareTableRequest()
         request.id = ["catalog", "only_namespace"]  # Missing table name
 
         with self.assertRaises(InvalidInputException):
-            namespace.create_empty_table(request)
+            namespace.declare_table(request)
 
     def test_invalid_namespace_id(self):
         """Test that namespace operations fail with invalid identifiers."""

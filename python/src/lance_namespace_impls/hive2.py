@@ -75,8 +75,8 @@ from lance_namespace_urllib3_client.models import (
     DropNamespaceResponse,
     ListTablesRequest,
     ListTablesResponse,
-    CreateEmptyTableRequest,
-    CreateEmptyTableResponse,
+    DeclareTableRequest,
+    DeclareTableResponse,
     DescribeTableRequest,
     DescribeTableResponse,
     DeregisterTableRequest,
@@ -435,10 +435,8 @@ class Hive2Namespace(LanceNamespace):
             logger.error(f"Failed to deregister table {request.id}: {e}")
             raise
 
-    def create_empty_table(
-        self, request: CreateEmptyTableRequest
-    ) -> CreateEmptyTableResponse:
-        """Create an empty table (metadata only) in Hive metastore."""
+    def declare_table(self, request: DeclareTableRequest) -> DeclareTableResponse:
+        """Declare a table (metadata only) in Hive metastore."""
         try:
             database, table_name = self._normalize_identifier(request.id)
 
@@ -477,9 +475,6 @@ class Hive2Namespace(LanceNamespace):
                 "empty_table": "true",  # Mark as empty table
             }
 
-            if hasattr(request, "properties") and request.properties:
-                parameters.update(request.properties)
-
             hive_table = HiveTable(
                 tableName=table_name,
                 dbName=database,
@@ -492,12 +487,12 @@ class Hive2Namespace(LanceNamespace):
             with self.client as client:
                 client.create_table(hive_table)
 
-            return CreateEmptyTableResponse(location=location)
+            return DeclareTableResponse(location=location)
 
         except AlreadyExistsException:
             raise ValueError(f"Table {request.id} already exists")
         except Exception as e:
-            logger.error(f"Failed to create empty table {request.id}: {e}")
+            logger.error(f"Failed to declare table {request.id}: {e}")
             raise
 
     def __getstate__(self):

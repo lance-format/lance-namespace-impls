@@ -14,10 +14,10 @@ import unittest
 
 import pytest
 
-from lance_namespace_impls.hive2 import Hive2Namespace
+from lance_namespace_impls.hive2 import Hive2Namespace, HIVE_AVAILABLE
 from lance_namespace_urllib3_client.models import (
-    CreateEmptyTableRequest,
     CreateNamespaceRequest,
+    DeclareTableRequest,
     DeregisterTableRequest,
     DescribeNamespaceRequest,
     DescribeTableRequest,
@@ -48,7 +48,10 @@ hive_available = check_hive_available()
 
 
 @pytest.mark.integration
-@unittest.skipUnless(hive_available, f"Hive2 Metastore is not available at {HIVE_URI}")
+@unittest.skipUnless(
+    HIVE_AVAILABLE and hive_available,
+    f"Hive2 dependencies not installed or Metastore not available at {HIVE_URI}",
+)
 class TestHive2NamespaceIntegration(unittest.TestCase):
     """Integration tests for Hive2Namespace against a running Hive2 Metastore."""
 
@@ -128,12 +131,12 @@ class TestHive2NamespaceIntegration(unittest.TestCase):
 
         table_name = f"test_table_{uuid.uuid4().hex[:8]}"
 
-        # Create empty table (DeclareTable)
-        create_request = CreateEmptyTableRequest()
+        # Declare table
+        create_request = DeclareTableRequest()
         create_request.id = [self.test_database, table_name]
         create_request.location = f"/tmp/lance/{self.test_database}/{table_name}"
 
-        create_response = self.namespace.create_empty_table(create_request)
+        create_response = self.namespace.declare_table(create_request)
         self.assertIsNotNone(create_response.location)
 
         # Describe table
@@ -155,19 +158,19 @@ class TestHive2NamespaceIntegration(unittest.TestCase):
         deregister_request.id = [self.test_database, table_name]
         self.namespace.deregister_table(deregister_request)
 
-    def test_create_empty_table_with_location(self):
-        """Test creating an empty table with a specific location."""
+    def test_declare_table_with_location(self):
+        """Test declaring a table with a specific location."""
         # Create namespace first
         ns_request = CreateNamespaceRequest()
         ns_request.id = [self.test_database]
         self.namespace.create_namespace(ns_request)
 
         table_name = "lance_table"
-        create_request = CreateEmptyTableRequest()
+        create_request = DeclareTableRequest()
         create_request.id = [self.test_database, table_name]
         create_request.location = f"/tmp/lance/{self.test_database}/{table_name}"
 
-        response = self.namespace.create_empty_table(create_request)
+        response = self.namespace.declare_table(create_request)
         self.assertIsNotNone(response.location)
 
         # Clean up table

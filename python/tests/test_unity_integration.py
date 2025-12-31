@@ -17,8 +17,8 @@ import pytest
 
 from lance_namespace_impls.unity import UnityNamespace
 from lance_namespace_urllib3_client.models import (
-    CreateEmptyTableRequest,
     CreateNamespaceRequest,
+    DeclareTableRequest,
     DeregisterTableRequest,
     DescribeNamespaceRequest,
     DescribeTableRequest,
@@ -147,14 +147,14 @@ class TestUnityNamespaceIntegration(unittest.TestCase):
 
         table_name = f"test_table_{uuid.uuid4().hex[:8]}"
 
-        # Create empty table (DeclareTable)
-        create_request = CreateEmptyTableRequest()
+        # Declare table
+        create_request = DeclareTableRequest()
         create_request.id = [UNITY_CATALOG, self.test_schema, table_name]
         create_request.location = (
             f"/tmp/lance/{UNITY_CATALOG}/{self.test_schema}/{table_name}"
         )
 
-        create_response = self.namespace.create_empty_table(create_request)
+        create_response = self.namespace.declare_table(create_request)
         self.assertIsNotNone(create_response.location)
 
         # Describe table
@@ -176,21 +176,21 @@ class TestUnityNamespaceIntegration(unittest.TestCase):
         deregister_request.id = [UNITY_CATALOG, self.test_schema, table_name]
         self.namespace.deregister_table(deregister_request)
 
-    def test_create_empty_table_with_location(self):
-        """Test creating an empty table with a specific location."""
+    def test_declare_table_with_location(self):
+        """Test declaring a table with a specific location."""
         # Create namespace first
         ns_request = CreateNamespaceRequest()
         ns_request.id = [UNITY_CATALOG, self.test_schema]
         self.namespace.create_namespace(ns_request)
 
         table_name = "lance_table"
-        create_request = CreateEmptyTableRequest()
+        create_request = DeclareTableRequest()
         create_request.id = [UNITY_CATALOG, self.test_schema, table_name]
         create_request.location = (
             f"/tmp/lance/{UNITY_CATALOG}/{self.test_schema}/{table_name}"
         )
 
-        response = self.namespace.create_empty_table(create_request)
+        response = self.namespace.declare_table(create_request)
         self.assertIsNotNone(response.location)
 
         # Clean up table
