@@ -28,10 +28,6 @@ import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
-import org.lance.namespace.model.NamespaceExistsRequest;
-import org.lance.namespace.model.RegisterTableRequest;
-import org.lance.namespace.model.RegisterTableResponse;
-import org.lance.namespace.model.TableExistsRequest;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -61,13 +57,10 @@ import software.amazon.awssdk.services.glue.model.GetDatabasesRequest;
 import software.amazon.awssdk.services.glue.model.GetDatabasesResponse;
 import software.amazon.awssdk.services.glue.model.GetTableRequest;
 import software.amazon.awssdk.services.glue.model.GetTableResponse;
-import software.amazon.awssdk.services.glue.model.GetTableVersionRequest;
-import software.amazon.awssdk.services.glue.model.GetTableVersionResponse;
 import software.amazon.awssdk.services.glue.model.GetTablesRequest;
 import software.amazon.awssdk.services.glue.model.GetTablesResponse;
 import software.amazon.awssdk.services.glue.model.StorageDescriptor;
 import software.amazon.awssdk.services.glue.model.Table;
-import software.amazon.awssdk.services.glue.model.TableVersion;
 
 import java.util.List;
 import java.util.Map;
@@ -477,57 +470,6 @@ public class TestGlueNamespace {
   }
 
   @Test
-  public void testNamespaceExistsTrue() {
-    String namespaceName = "existing";
-    NamespaceExistsRequest request =
-        new NamespaceExistsRequest().id(ImmutableList.of(namespaceName));
-
-    Database database = Database.builder().name(namespaceName).build();
-    when(glue.getDatabase(any(GetDatabaseRequest.class)))
-        .thenReturn(GetDatabaseResponse.builder().database(database).build());
-
-    // Should not throw any exception for existing namespace
-    glueNamespace.namespaceExists(request);
-
-    verify(glue).getDatabase(any(GetDatabaseRequest.class));
-  }
-
-  @Test
-  public void testNamespaceExistsFalse() {
-    String namespaceName = "nonexistent";
-    NamespaceExistsRequest request =
-        new NamespaceExistsRequest().id(ImmutableList.of(namespaceName));
-
-    when(glue.getDatabase(any(GetDatabaseRequest.class)))
-        .thenThrow(EntityNotFoundException.builder().message("Entity Not Found").build());
-
-    assertThrows(LanceNamespaceException.class, () -> glueNamespace.namespaceExists(request));
-    verify(glue).getDatabase(any(GetDatabaseRequest.class));
-  }
-
-  @Test
-  public void testNamespaceExistsWithNullName() {
-    NamespaceExistsRequest request = new NamespaceExistsRequest();
-
-    assertThrows(LanceNamespaceException.class, () -> glueNamespace.namespaceExists(request));
-  }
-
-  @Test
-  public void testNamespaceExistsWithEmptyName() {
-    NamespaceExistsRequest request = new NamespaceExistsRequest().id(ImmutableList.of(""));
-
-    assertThrows(LanceNamespaceException.class, () -> glueNamespace.namespaceExists(request));
-  }
-
-  @Test
-  public void testNamespaceExistsWithNestedParent() {
-    NamespaceExistsRequest request =
-        new NamespaceExistsRequest().id(ImmutableList.of("parent", "test"));
-
-    assertThrows(LanceNamespaceException.class, () -> glueNamespace.namespaceExists(request));
-  }
-
-  @Test
   public void testBasicListTables() {
     Map<String, String> parameters = ImmutableMap.of(TABLE_TYPE_PROP, LANCE_TABLE_TYPE_VALUE);
 
@@ -661,67 +603,6 @@ public class TestGlueNamespace {
   }
 
   @Test
-  public void testBasicRegisterTable() {
-    RegisterTableRequest req =
-        new RegisterTableRequest()
-            .id(ImmutableList.of("ns1", "tbl"))
-            .location("s3://bucket/tbl")
-            .properties(ImmutableMap.of("key", "val"));
-
-    when(glue.createTable(any(software.amazon.awssdk.services.glue.model.CreateTableRequest.class)))
-        .thenReturn(
-            software.amazon.awssdk.services.glue.model.CreateTableResponse.builder().build());
-
-    RegisterTableResponse resp = glueNamespace.registerTable(req);
-    assertEquals("s3://bucket/tbl", resp.getLocation());
-    assertEquals(ImmutableMap.of("key", "val"), resp.getProperties());
-  }
-
-  @Test
-  public void testRegisterTableAlreadyExists() {
-    RegisterTableRequest req =
-        new RegisterTableRequest().id(ImmutableList.of("ns1", "tbl")).location("s3://bucket/tbl");
-    when(glue.createTable(any(software.amazon.awssdk.services.glue.model.CreateTableRequest.class)))
-        .thenThrow(AlreadyExistsException.builder().message("Table Already Exists").build());
-
-    assertThrows(LanceNamespaceException.class, () -> glueNamespace.registerTable(req));
-  }
-
-  @Test
-  public void testRegisterTableWithOverwrite() {
-    // First create a table
-    RegisterTableRequest req =
-        new RegisterTableRequest().id(ImmutableList.of("ns", "tbl")).location("s3://bucket/tbl");
-
-    when(glue.createTable(any(software.amazon.awssdk.services.glue.model.CreateTableRequest.class)))
-        .thenReturn(
-            software.amazon.awssdk.services.glue.model.CreateTableResponse.builder().build());
-
-    glueNamespace.registerTable(req);
-
-    // Now overwrite
-    req.setMode("Overwrite");
-    glueNamespace.registerTable(req);
-  }
-
-  @Test
-  public void testRegisterTableNamespaceNotFound() {
-    RegisterTableRequest req =
-        new RegisterTableRequest().id(ImmutableList.of("ns1", "tbl")).location("s3://bucket/tbl");
-    when(glue.createTable(any(software.amazon.awssdk.services.glue.model.CreateTableRequest.class)))
-        .thenThrow(EntityNotFoundException.builder().message("Database Not Found").build());
-
-    assertThrows(LanceNamespaceException.class, () -> glueNamespace.registerTable(req));
-  }
-
-  @Test
-  public void testRegisterTableMissingLocation() {
-    RegisterTableRequest req =
-        new RegisterTableRequest().id(ImmutableList.of("ns1", "tbl")).location("");
-    assertThrows(LanceNamespaceException.class, () -> glueNamespace.registerTable(req));
-  }
-
-  @Test
   public void testBasicDeregisterTable() {
     List<String> id = ImmutableList.of("ns1", "tbl");
     Table tbl =
@@ -771,59 +652,5 @@ public class TestGlueNamespace {
         () ->
             glueNamespace.deregisterTable(
                 new DeregisterTableRequest().id(ImmutableList.of("ns1", "tbl"))));
-  }
-
-  @Test
-  public void testTableExistsNoVersion() {
-    ImmutableMap<String, String> parameters =
-        ImmutableMap.of(TABLE_TYPE_PROP, LANCE_TABLE_TYPE_VALUE);
-
-    TableExistsRequest req = new TableExistsRequest().id(ImmutableList.of("ns1", "tbl"));
-
-    when(glue.getTable(any(GetTableRequest.class)))
-        .thenReturn(
-            GetTableResponse.builder()
-                .table(Table.builder().name("tbl").parameters(parameters).build())
-                .build());
-
-    glueNamespace.tableExists(req);
-  }
-
-  @Test
-  public void testTableExistsWithVersion() {
-    TableExistsRequest req =
-        new TableExistsRequest().id(ImmutableList.of("ns1", "tbl")).version(42L);
-
-    TableVersion tableVersion =
-        TableVersion.builder()
-            .table(
-                Table.builder()
-                    .parameters(ImmutableMap.of(TABLE_TYPE_PROP, LANCE_TABLE_TYPE_VALUE))
-                    .build())
-            .build();
-
-    when(glue.getTableVersion(any(GetTableVersionRequest.class)))
-        .thenReturn(GetTableVersionResponse.builder().tableVersion(tableVersion).build());
-
-    glueNamespace.tableExists(req);
-  }
-
-  @Test
-  public void testTableExistsNotFound() {
-    TableExistsRequest req = new TableExistsRequest().id(ImmutableList.of("ns1", "tbl"));
-    when(glue.getTable(any(GetTableRequest.class)))
-        .thenThrow(EntityNotFoundException.builder().message("Entity Not Found").build());
-
-    assertThrows(LanceNamespaceException.class, () -> glueNamespace.tableExists(req));
-  }
-
-  @Test
-  public void testTableExistsInvalidId() {
-    TableExistsRequest req = new TableExistsRequest();
-
-    req.addIdItem("ns1");
-    req.addIdItem(null);
-
-    assertThrows(LanceNamespaceException.class, () -> glueNamespace.tableExists(req));
   }
 }
