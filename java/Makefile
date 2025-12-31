@@ -143,11 +143,11 @@ integ-test:
 
 .PHONY: integ-test-hive2
 integ-test-hive2:
-	./mvnw test -pl lance-namespace-hive2 -Dtest="*IntegrationTest" -DfailIfNoTests=false
+	./mvnw test -pl lance-namespace-hive2 -Dtest="*NamespaceIntegration" -DfailIfNoTests=false
 
 .PHONY: integ-test-hive3
 integ-test-hive3:
-	./mvnw test -pl lance-namespace-hive3 -Dtest="*IntegrationTest" -DfailIfNoTests=false
+	./mvnw test -pl lance-namespace-hive3 -Dtest="*NamespaceIntegration" -DfailIfNoTests=false
 
 .PHONY: integ-test-polaris
 integ-test-polaris:

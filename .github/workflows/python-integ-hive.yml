@@ -17,8 +17,10 @@ on:
     branches:
       - main
     paths:
-      - python/src/lance_namespace_impls/hive.py
-      - python/tests/test_hive.py
+      - python/src/lance_namespace_impls/hive2.py
+      - python/src/lance_namespace_impls/rest_client.py
+      - python/tests/test_hive2.py
+      - python/tests/test_hive2_integration.py
       - docker/hive2/**
       - .github/workflows/python-integ-hive.yml
   pull_request:
@@ -28,8 +30,10 @@ on:
       - ready_for_review
       - reopened
     paths:
-      - python/src/lance_namespace_impls/hive.py
-      - python/tests/test_hive.py
+      - python/src/lance_namespace_impls/hive2.py
+      - python/src/lance_namespace_impls/rest_client.py
+      - python/tests/test_hive2.py
+      - python/tests/test_hive2_integration.py
       - docker/hive2/**
       - .github/workflows/python-integ-hive.yml
   workflow_dispatch:

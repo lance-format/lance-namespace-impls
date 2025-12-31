@@ -42,7 +42,7 @@ from lance_namespace_impls.rest_client import (
 
 logger = logging.getLogger(__name__)
 
-NAMESPACE_SEPARATOR = "\x1F"
+NAMESPACE_SEPARATOR = "\x1f"
 
 
 @dataclass
@@ -179,7 +179,10 @@ class IcebergNamespace(LanceNamespace):
             raise InvalidInputException("Namespace must have at least one level")
 
         try:
-            create_request = {"namespace": ns_id, "properties": request.properties or {}}
+            create_request = {
+                "namespace": ns_id,
+                "properties": request.properties or {},
+            }
 
             response = self.rest_client.post("/namespaces", create_request)
 
@@ -251,9 +254,7 @@ class IcebergNamespace(LanceNamespace):
             if e.is_not_found():
                 return DropNamespaceResponse(properties={})
             if e.is_conflict():
-                raise InternalException(
-                    f"Namespace not empty: {'.'.join(request.id)}"
-                )
+                raise InternalException(f"Namespace not empty: {'.'.join(request.id)}")
             raise InternalException(f"Failed to drop namespace: {e}")
         except InvalidInputException:
             raise
@@ -329,7 +330,7 @@ class IcebergNamespace(LanceNamespace):
             }
 
             namespace_path = self._encode_namespace(namespace)
-            response = self.rest_client.post(
+            self.rest_client.post(
                 f"/namespaces/{namespace_path}/tables", create_request
             )
 
@@ -377,28 +378,26 @@ class IcebergNamespace(LanceNamespace):
             )
 
             if not response or "metadata" not in response:
-                raise TableNotFoundException(
-                    f"Table not found: {'.'.join(request.id)}"
-                )
+                raise TableNotFoundException(f"Table not found: {'.'.join(request.id)}")
 
             metadata = response["metadata"]
             props = metadata.get("properties", {})
 
-            if not props.get(self.TABLE_TYPE_KEY, "").lower() == self.TABLE_TYPE_LANCE.lower():
+            if (
+                not props.get(self.TABLE_TYPE_KEY, "").lower()
+                == self.TABLE_TYPE_LANCE.lower()
+            ):
                 raise InvalidInputException(
                     f"Table {'.'.join(request.id)} is not a Lance table"
                 )
 
             return DescribeTableResponse(
-                location=metadata.get("location"),
-                storage_options=props
+                location=metadata.get("location"), storage_options=props
             )
 
         except RestClientException as e:
             if e.is_not_found():
-                raise TableNotFoundException(
-                    f"Table not found: {'.'.join(request.id)}"
-                )
+                raise TableNotFoundException(f"Table not found: {'.'.join(request.id)}")
             raise InternalException(f"Failed to describe table: {e}")
         except (TableNotFoundException, InvalidInputException):
             raise
@@ -448,9 +447,7 @@ class IcebergNamespace(LanceNamespace):
 
         except RestClientException as e:
             if e.is_not_found():
-                raise TableNotFoundException(
-                    f"Table not found: {'.'.join(request.id)}"
-                )
+                raise TableNotFoundException(f"Table not found: {'.'.join(request.id)}")
             raise InternalException(f"Failed to deregister table: {e}")
         except (TableNotFoundException, InvalidInputException):
             raise

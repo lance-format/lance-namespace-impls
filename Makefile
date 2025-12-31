@@ -156,6 +156,14 @@ python-integ-test:
 python-integ-test-hive:
 	cd python && make integ-test-hive
 
+.PHONY: python-integ-test-hive2
+python-integ-test-hive2:
+	cd python && make integ-test-hive2
+
+.PHONY: python-integ-test-hive3
+python-integ-test-hive3:
+	cd python && make integ-test-hive3
+
 .PHONY: python-integ-test-polaris
 python-integ-test-polaris:
 	cd python && make integ-test-polaris

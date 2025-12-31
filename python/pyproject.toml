@@ -30,8 +30,9 @@ hive3 = [
     "thrift>=0.13.0",
     "hive-metastore-client>=1.0.0",
 ]
-unity = []
+iceberg = []
 polaris = []
+unity = []
 all = [
     "boto3>=1.35.0",
     "botocore>=1.35.0",
@@ -41,6 +42,7 @@ all = [
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+    "ruff>=0.4.0",
 ]
 
 [tool.pytest.ini_options]

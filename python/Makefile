@@ -28,21 +28,21 @@ test-glue:
 	uv run pytest tests/test_glue.py
 
 # ============================================================================
-# Hive
+# Hive2
 # ============================================================================
 
 .PHONY: lint-hive
 lint-hive:
-	uv run ruff check src/lance_namespace_impls/hive.py tests/test_hive.py
-	uv run ruff format --check src/lance_namespace_impls/hive.py tests/test_hive.py
+	uv run ruff check src/lance_namespace_impls/hive2.py src/lance_namespace_impls/hive3.py tests/test_hive2.py tests/test_hive3.py tests/test_hive2_integration.py tests/test_hive3_integration.py
+	uv run ruff format --check src/lance_namespace_impls/hive2.py src/lance_namespace_impls/hive3.py tests/test_hive2.py tests/test_hive3.py tests/test_hive2_integration.py tests/test_hive3_integration.py
 
 .PHONY: install-hive
 install-hive:
-	uv sync --extra hive2 --extra dev
+	uv sync --extra hive2 --extra hive3 --extra dev
 
 .PHONY: test-hive
 test-hive:
-	uv run pytest tests/test_hive.py
+	uv run pytest tests/test_hive2.py tests/test_hive3.py
 
 # ============================================================================
 # Unity
@@ -72,7 +72,7 @@ lint-iceberg:
 
 .PHONY: install-iceberg
 install-iceberg:
-	uv sync --extra dev
+	uv sync --extra iceberg --extra dev
 
 .PHONY: test-iceberg
 test-iceberg:
@@ -139,7 +139,15 @@ integ-test:
 
 .PHONY: integ-test-hive
 integ-test-hive:
-	uv run pytest tests/test_hive.py -m integration
+	uv run pytest tests/test_hive2_integration.py tests/test_hive3_integration.py -v
+
+.PHONY: integ-test-hive2
+integ-test-hive2:
+	uv run pytest tests/test_hive2_integration.py -v
+
+.PHONY: integ-test-hive3
+integ-test-hive3:
+	uv run pytest tests/test_hive3_integration.py -v
 
 .PHONY: integ-test-polaris
 integ-test-polaris:

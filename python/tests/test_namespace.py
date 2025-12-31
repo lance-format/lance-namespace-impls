@@ -4,7 +4,6 @@ from lance_namespace import LanceNamespace, connect
 
 
 class MockNamespace(LanceNamespace):
-
     def __init__(self, **kwargs):
         self.properties = kwargs
 
@@ -12,8 +11,9 @@ class MockNamespace(LanceNamespace):
         """Return a mock namespace ID."""
         return "MockNamespace { }"
 
+
 def test_connect_with_short_name_rest():
-    with patch('lance_namespace.importlib.import_module') as mock_import:
+    with patch("lance_namespace.importlib.import_module") as mock_import:
         mock_module = Mock()
         mock_module.RestNamespace = MockNamespace
         mock_import.return_value = mock_module
@@ -25,7 +25,7 @@ def test_connect_with_short_name_rest():
 
 
 def test_connect_with_full_class_path():
-    with patch('lance_namespace.importlib.import_module') as mock_import:
+    with patch("lance_namespace.importlib.import_module") as mock_import:
         mock_module = Mock()
         mock_module.CustomNamespace = MockNamespace
         mock_import.return_value = mock_module
@@ -37,7 +37,7 @@ def test_connect_with_full_class_path():
 
 
 def test_connect_invalid_implementation():
-    with patch('lance_namespace.importlib.import_module') as mock_import:
+    with patch("lance_namespace.importlib.import_module") as mock_import:
         mock_import.side_effect = ImportError("Module not found")
 
         with pytest.raises(ValueError) as exc_info:
@@ -47,7 +47,7 @@ def test_connect_invalid_implementation():
 
 
 def test_connect_non_namespace_class():
-    with patch('lance_namespace.importlib.import_module') as mock_import:
+    with patch("lance_namespace.importlib.import_module") as mock_import:
         mock_module = Mock()
         mock_module.NotANamespace = str
         mock_import.return_value = mock_module

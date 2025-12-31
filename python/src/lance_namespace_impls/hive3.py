@@ -39,14 +39,15 @@ Configuration Properties:
     client.pool-size (int): Size of the HMS client connection pool (default: 3)
     storage.* (str): Additional storage configurations
 """
-from typing import Dict, List, Optional, Any
+
+from typing import List, Optional
 from urllib.parse import urlparse
 import os
 import logging
 
 try:
-    from hive_metastore.ThriftHiveMetastore import Client
-    from hive_metastore.ttypes import (
+    from hive_metastore_client import HiveMetastoreClient as Client
+    from thrift_files.libraries.thrift_hive_metastore_client.ttypes import (
         Database as HiveDatabase,
         Table as HiveTable,
         StorageDescriptor,
@@ -57,8 +58,7 @@ try:
         InvalidOperationException,
         MetaException,
     )
-    from thrift.protocol import TBinaryProtocol
-    from thrift.transport import TSocket, TTransport
+
     HIVE_AVAILABLE = True
 except ImportError:
     HIVE_AVAILABLE = False
@@ -114,7 +114,7 @@ EXTERNAL_TABLE = "EXTERNAL_TABLE"
 DEFAULT_CATALOG = "hive"
 
 
-class Hive3MetastoreClient:
+class Hive3MetastoreClientWrapper:
     """Helper class to manage Hive 3.x Metastore client connections."""
 
     def __init__(self, uri: str, ugi: Optional[str] = None):
@@ -126,39 +126,30 @@ class Hive3MetastoreClient:
 
         self._uri = uri
         self._ugi = ugi.split(":") if ugi else None
-        self._transport = None
-        self._client = None
-        self._init_client()
-
-    def _init_client(self):
-        """Initialize the Thrift client connection."""
         url_parts = urlparse(self._uri)
-        socket = TSocket.TSocket(url_parts.hostname, url_parts.port or 9083)
-        self._transport = TTransport.TBufferedTransport(socket)
-        protocol = TBinaryProtocol.TBinaryProtocol(self._transport)
-        self._client = Client(protocol)
-
-        if not self._transport.isOpen():
-            self._transport.open()
-
-        if self._ugi:
-            self._client.set_ugi(*self._ugi)
+        self._host = url_parts.hostname or "localhost"
+        self._port = url_parts.port or 9083
+        self._client = None
 
     def __enter__(self):
         """Enter context manager."""
-        if not self._transport or not self._transport.isOpen():
-            self._init_client()
+        self._client = Client(host=self._host, port=self._port)
+        self._client.open()
+        if self._ugi:
+            self._client.set_ugi(*self._ugi)
         return self._client
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit context manager."""
-        if self._transport and self._transport.isOpen():
-            self._transport.close()
+        if self._client:
+            self._client.close()
+            self._client = None
 
     def close(self):
         """Close the client connection."""
-        if self._transport and self._transport.isOpen():
-            self._transport.close()
+        if self._client:
+            self._client.close()
+            self._client = None
 
 
 class Hive3Namespace(LanceNamespace):
@@ -188,7 +179,9 @@ class Hive3Namespace(LanceNamespace):
         self.ugi = properties.get("ugi")
         self.root = properties.get("root", os.getcwd())
         self.pool_size = int(properties.get("client.pool-size", "3"))
-        self.storage_properties = {k[8:]: v for k, v in properties.items() if k.startswith("storage.")}
+        self.storage_properties = {
+            k[8:]: v for k, v in properties.items() if k.startswith("storage.")
+        }
 
         self._properties = properties.copy()
         self._client = None
@@ -201,7 +194,7 @@ class Hive3Namespace(LanceNamespace):
     def client(self):
         """Get the Hive client, initializing it if necessary."""
         if self._client is None:
-            self._client = Hive3MetastoreClient(self.uri, self.ugi)
+            self._client = Hive3MetastoreClientWrapper(self.uri, self.ugi)
         return self._client
 
     def _normalize_identifier(self, identifier: List[str]) -> tuple:
@@ -237,7 +230,11 @@ class Hive3Namespace(LanceNamespace):
                 with self.client as client:
                     # Try to get catalogs if supported (Hive 3.x)
                     try:
-                        catalogs = client.get_catalogs().names if hasattr(client, 'get_catalogs') else []
+                        catalogs = (
+                            client.get_catalogs().names
+                            if hasattr(client, "get_catalogs")
+                            else []
+                        )
                     except Exception:
                         # Fall back to default catalog
                         catalogs = [DEFAULT_CATALOG]
@@ -245,7 +242,9 @@ class Hive3Namespace(LanceNamespace):
 
             elif len(ns_id) == 1:
                 # List databases in catalog
-                catalog = ns_id[0].lower()
+                # Note: Hive 2.x Metastore API doesn't support catalog operations,
+                # so we ignore the catalog name and list all databases
+                _catalog = ns_id[0].lower()  # noqa: F841
                 with self.client as client:
                     try:
                         databases = client.get_all_databases()
@@ -263,13 +262,15 @@ class Hive3Namespace(LanceNamespace):
             logger.error(f"Failed to list namespaces: {e}")
             raise
 
-    def describe_namespace(self, request: DescribeNamespaceRequest) -> DescribeNamespaceResponse:
+    def describe_namespace(
+        self, request: DescribeNamespaceRequest
+    ) -> DescribeNamespaceResponse:
         """Describe a namespace (catalog or database)."""
         try:
             if self._is_root_namespace(request.id):
                 properties = {
                     "location": self.root,
-                    "description": "Root namespace (Hive 3.x Metastore)"
+                    "description": "Root namespace (Hive 3.x Metastore)",
                 }
                 if self.ugi:
                     properties["ugi"] = self.ugi
@@ -280,7 +281,7 @@ class Hive3Namespace(LanceNamespace):
                 catalog_name = request.id[0].lower()
                 properties = {
                     "description": f"Catalog: {catalog_name}",
-                    "catalog.location.uri": os.path.join(self.root, catalog_name)
+                    "catalog.location.uri": os.path.join(self.root, catalog_name),
                 }
                 return DescribeNamespaceResponse(properties=properties)
 
@@ -312,7 +313,9 @@ class Hive3Namespace(LanceNamespace):
             logger.error(f"Failed to describe namespace {request.id}: {e}")
             raise
 
-    def create_namespace(self, request: CreateNamespaceRequest) -> CreateNamespaceResponse:
+    def create_namespace(
+        self, request: CreateNamespaceRequest
+    ) -> CreateNamespaceResponse:
         """Create a new namespace (catalog or database)."""
         try:
             if self._is_root_namespace(request.id):
@@ -337,16 +340,26 @@ class Hive3Namespace(LanceNamespace):
 
                 database = HiveDatabase()
                 database.name = database_name
-                database.description = request.properties.get("comment", "") if request.properties else ""
-                database.ownerName = request.properties.get("owner", os.getenv("USER", "")) if request.properties else os.getenv("USER", "")
-                database.locationUri = request.properties.get(
-                    "location",
-                    os.path.join(self.root, database_name)
-                ) if request.properties else os.path.join(self.root, database_name)
+                database.description = (
+                    request.properties.get("comment", "") if request.properties else ""
+                )
+                database.ownerName = (
+                    request.properties.get("owner", os.getenv("USER", ""))
+                    if request.properties
+                    else os.getenv("USER", "")
+                )
+                database.locationUri = (
+                    request.properties.get(
+                        "location", os.path.join(self.root, database_name)
+                    )
+                    if request.properties
+                    else os.path.join(self.root, database_name)
+                )
 
                 if request.properties:
                     database.parameters = {
-                        k: v for k, v in request.properties.items()
+                        k: v
+                        for k, v in request.properties.items()
                         if k not in ["comment", "owner", "location"]
                     }
 
@@ -359,7 +372,9 @@ class Hive3Namespace(LanceNamespace):
                         elif mode in ("exist_ok", "existok"):
                             pass  # OK to exist
                         elif mode == "overwrite":
-                            client.drop_database(database_name, deleteData=True, cascade=True)
+                            client.drop_database(
+                                database_name, deleteData=True, cascade=True
+                            )
                             client.create_database(database)
 
                 return CreateNamespaceResponse()
@@ -438,7 +453,9 @@ class Hive3Namespace(LanceNamespace):
             if self._is_root_namespace(request.id) or len(request.id) < 2:
                 return ListTablesResponse(tables=[])
 
-            catalog_name = request.id[0].lower()
+            # Note: Hive 2.x Metastore API doesn't support catalog operations,
+            # so we ignore the catalog name
+            _catalog_name = request.id[0].lower()  # noqa: F841
             database_name = request.id[1].lower()
 
             with self.client as client:
@@ -450,7 +467,9 @@ class Hive3Namespace(LanceNamespace):
                     try:
                         table = client.get_table(database_name, table_name)
                         if table.parameters:
-                            table_type = table.parameters.get(TABLE_TYPE_KEY, "").lower()
+                            table_type = table.parameters.get(
+                                TABLE_TYPE_KEY, ""
+                            ).lower()
                             if table_type == LANCE_TABLE_FORMAT:
                                 tables.append(table_name)
                     except Exception:
@@ -486,8 +505,7 @@ class Hive3Namespace(LanceNamespace):
                     raise ValueError(f"Table {request.id} has no location")
 
                 return DescribeTableResponse(
-                    location=location,
-                    storage_options=self.config.storage_options
+                    location=location, storage_options=self.storage_properties
                 )
 
         except Exception as e:
@@ -501,14 +519,20 @@ class Hive3Namespace(LanceNamespace):
         try:
             catalog, database, table_name = self._normalize_identifier(request.id)
 
-            managed_by = request.properties.get(MANAGED_BY_KEY, "storage") if request.properties else "storage"
+            managed_by = (
+                request.properties.get(MANAGED_BY_KEY, "storage")
+                if request.properties
+                else "storage"
+            )
 
             dataset = lance.dataset(request.location)
             schema = dataset.schema
 
             version = None
             if managed_by == "impl":
-                version = request.properties.get(VERSION_KEY) if request.properties else None
+                version = (
+                    request.properties.get(VERSION_KEY) if request.properties else None
+                )
                 if version is None:
                     version = str(dataset.version)
 
@@ -518,9 +542,14 @@ class Hive3Namespace(LanceNamespace):
             hive_table = HiveTable()
             hive_table.dbName = database
             hive_table.tableName = table_name
-            hive_table.owner = request.properties.get("owner", os.getenv("USER", "")) if request.properties else os.getenv("USER", "")
+            hive_table.owner = (
+                request.properties.get("owner", os.getenv("USER", ""))
+                if request.properties
+                else os.getenv("USER", "")
+            )
 
             import time
+
             current_time = int(time.time())
             try:
                 hive_table.createTime = int(os.path.getctime(request.location))
@@ -564,8 +593,7 @@ class Hive3Namespace(LanceNamespace):
                 client.create_table(hive_table)
 
             return RegisterTableResponse(
-                location=request.location,
-                properties=request.properties
+                location=request.location, properties=request.properties
             )
 
         except Exception as e:
@@ -605,7 +633,9 @@ class Hive3Namespace(LanceNamespace):
             "then use Lance SDK to delete the actual table data if needed."
         )
 
-    def deregister_table(self, request: DeregisterTableRequest) -> DeregisterTableResponse:
+    def deregister_table(
+        self, request: DeregisterTableRequest
+    ) -> DeregisterTableResponse:
         """Deregister a table without deleting data."""
         try:
             catalog, database, table_name = self._normalize_identifier(request.id)
@@ -631,7 +661,9 @@ class Hive3Namespace(LanceNamespace):
             logger.error(f"Failed to deregister table {request.id}: {e}")
             raise
 
-    def create_table(self, request: CreateTableRequest, request_data: bytes) -> CreateTableResponse:
+    def create_table(
+        self, request: CreateTableRequest, request_data: bytes
+    ) -> CreateTableResponse:
         """Create a new Lance table and register it.
 
         This operation is not supported. Use create_empty_table to declare table metadata,
@@ -642,7 +674,9 @@ class Hive3Namespace(LanceNamespace):
             "then use Lance SDK to create the actual table data."
         )
 
-    def create_empty_table(self, request: CreateEmptyTableRequest) -> CreateEmptyTableResponse:
+    def create_empty_table(
+        self, request: CreateEmptyTableRequest
+    ) -> CreateEmptyTableResponse:
         """Create an empty table (metadata only)."""
         try:
             catalog, database, table_name = self._normalize_identifier(request.id)
@@ -656,29 +690,27 @@ class Hive3Namespace(LanceNamespace):
 
             fields = [
                 FieldSchema(
-                    name='__placeholder_id',
-                    type='bigint',
-                    comment='Placeholder column'
+                    name="__placeholder_id", type="bigint", comment="Placeholder column"
                 )
             ]
 
             storage_descriptor = StorageDescriptor(
                 cols=fields,
                 location=location,
-                inputFormat='org.apache.hadoop.mapred.TextInputFormat',
-                outputFormat='org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat',
+                inputFormat="org.apache.hadoop.mapred.TextInputFormat",
+                outputFormat="org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
                 serdeInfo=SerDeInfo(
-                    serializationLib='org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe'
-                )
+                    serializationLib="org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe"
+                ),
             )
 
             parameters = {
                 TABLE_TYPE_KEY: LANCE_TABLE_FORMAT,
                 MANAGED_BY_KEY: "storage",
-                'empty_table': 'true',
+                "empty_table": "true",
             }
 
-            if request.properties:
+            if hasattr(request, "properties") and request.properties:
                 parameters.update(request.properties)
 
             hive_table = HiveTable(
@@ -686,7 +718,7 @@ class Hive3Namespace(LanceNamespace):
                 dbName=database,
                 sd=storage_descriptor,
                 parameters=parameters,
-                tableType='EXTERNAL_TABLE'
+                tableType="EXTERNAL_TABLE",
             )
 
             with self.client as client:
@@ -707,11 +739,7 @@ class Hive3Namespace(LanceNamespace):
             hive_type = self._pyarrow_type_to_hive_type(field.type)
             if not FieldSchema:
                 raise ImportError("Hive dependencies not available")
-            hive_field = FieldSchema(
-                name=field.name,
-                type=hive_type,
-                comment=""
-            )
+            hive_field = FieldSchema(name=field.name, type=hive_type, comment="")
             fields.append(hive_field)
         return fields
 
@@ -755,9 +783,15 @@ class Hive3Namespace(LanceNamespace):
     def __getstate__(self):
         """Prepare instance for pickling."""
         state = self.__dict__.copy()
-        state['_client'] = None
+        state["_client"] = None
         return state
 
     def __setstate__(self, state):
         """Restore instance from pickled state."""
         self.__dict__.update(state)
+
+    def close(self):
+        """Close the Hive Metastore client connection."""
+        if self._client is not None:
+            self._client.close()
+            self._client = None

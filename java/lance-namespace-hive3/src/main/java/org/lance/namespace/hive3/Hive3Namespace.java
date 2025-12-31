@@ -27,6 +27,8 @@ import org.lance.namespace.model.CreateEmptyTableRequest;
 import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeregisterTableRequest;
+import org.lance.namespace.model.DeregisterTableResponse;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
 import org.lance.namespace.model.DescribeTableRequest;
@@ -220,11 +222,12 @@ public class Hive3Namespace implements LanceNamespace {
   public DropNamespaceResponse dropNamespace(DropNamespaceRequest request) {
     ObjectIdentifier id = ObjectIdentifier.of(request.getId());
     String mode = request.getMode() != null ? request.getMode().toLowerCase() : "fail";
+    String behavior = request.getBehavior() != null ? request.getBehavior() : "Restrict";
 
     ValidationUtil.checkArgument(
         !id.isRoot() && id.levels() <= 2, "Expect a 2-level namespace but get %s", id);
 
-    Map<String, String> properties = doDropNamespace(id, mode);
+    Map<String, String> properties = doDropNamespace(id, mode, behavior);
 
     DropNamespaceResponse response = new DropNamespaceResponse();
     response.setProperties(properties);
@@ -317,7 +320,20 @@ public class Hive3Namespace implements LanceNamespace {
     return response;
   }
 
-  // Removed: dropTable(DropTableRequest) - using default implementation from interface
+  @Override
+  public DeregisterTableResponse deregisterTable(DeregisterTableRequest request) {
+    ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
+
+    ValidationUtil.checkArgument(
+        tableId.levels() == 3, "Expect 3-level table identifier but get %s", tableId);
+
+    String location = doDropTable(tableId);
+
+    DeregisterTableResponse response = new DeregisterTableResponse();
+    response.setId(request.getId());
+    response.setLocation(location);
+    return response;
+  }
 
   public void setConf(Configuration conf) {
     this.hadoopConf = conf;
@@ -590,16 +606,16 @@ public class Hive3Namespace implements LanceNamespace {
     }
   }
 
-  protected Map<String, String> doDropNamespace(ObjectIdentifier id, String mode) {
+  protected Map<String, String> doDropNamespace(ObjectIdentifier id, String mode, String behavior) {
 
     try {
       if (id.levels() == 1) {
         // Drop catalog
-        return doDropCatalog(id.levelAtListPos(0).toLowerCase(), mode);
+        return doDropCatalog(id.levelAtListPos(0).toLowerCase(), mode, behavior);
       } else {
         // Drop database
         return doDropDatabase(
-            id.levelAtListPos(0).toLowerCase(), id.levelAtListPos(1).toLowerCase(), mode);
+            id.levelAtListPos(0).toLowerCase(), id.levelAtListPos(1).toLowerCase(), mode, behavior);
       }
     } catch (TException | InterruptedException e) {
       if (e instanceof InterruptedException) {
@@ -610,7 +626,7 @@ public class Hive3Namespace implements LanceNamespace {
     }
   }
 
-  private Map<String, String> doDropCatalog(String catalog, String mode)
+  private Map<String, String> doDropCatalog(String catalog, String mode, String behavior)
       throws TException, InterruptedException {
     Catalog catalogObj = Hive3Util.getCatalogOrNull(clientPool, catalog);
     if (catalogObj == null) {
@@ -621,13 +637,16 @@ public class Hive3Namespace implements LanceNamespace {
       }
     }
 
-    // Check for child databases (RESTRICT mode only)
-    List<String> databases = clientPool.run(client -> client.getAllDatabases(catalog));
-    if (!databases.isEmpty()) {
-      throw new InvalidInputException(
-          String.format(
-              "Catalog %s is not empty. Contains %d databases: %s",
-              catalog, databases.size(), databases));
+    // Check for child databases (RESTRICT behavior only, not for Cascade)
+    boolean cascade = "Cascade".equalsIgnoreCase(behavior);
+    if (!cascade) {
+      List<String> databases = clientPool.run(client -> client.getAllDatabases(catalog));
+      if (!databases.isEmpty()) {
+        throw new InvalidInputException(
+            String.format(
+                "Catalog %s is not empty. Contains %d databases: %s",
+                catalog, databases.size(), databases));
+      }
     }
 
     // Collect catalog properties
@@ -650,7 +669,8 @@ public class Hive3Namespace implements LanceNamespace {
     return properties;
   }
 
-  private Map<String, String> doDropDatabase(String catalog, String db, String mode)
+  private Map<String, String> doDropDatabase(
+      String catalog, String db, String mode, String behavior)
       throws TException, InterruptedException {
     Database database = Hive3Util.getDatabaseOrNull(clientPool, catalog, db);
     if (database == null) {
@@ -662,13 +682,16 @@ public class Hive3Namespace implements LanceNamespace {
       }
     }
 
-    // Check if database contains tables (RESTRICT mode only)
-    List<String> tables = doListTables(catalog, db);
-    if (!tables.isEmpty()) {
-      throw new InvalidInputException(
-          String.format(
-              "Database %s.%s is not empty. Contains %d tables: %s",
-              catalog, db, tables.size(), tables));
+    // Check if database contains tables (RESTRICT behavior only, not for Cascade)
+    boolean cascade = "Cascade".equalsIgnoreCase(behavior);
+    if (!cascade) {
+      List<String> tables = doListTables(catalog, db);
+      if (!tables.isEmpty()) {
+        throw new InvalidInputException(
+            String.format(
+                "Database %s.%s is not empty. Contains %d tables: %s",
+                catalog, db, tables.size(), tables));
+      }
     }
 
     // Collect database properties
@@ -690,9 +713,10 @@ public class Hive3Namespace implements LanceNamespace {
     }
 
     // Drop the database
+    final boolean cascadeDrop = cascade;
     clientPool.run(
         client -> {
-          client.dropDatabase(catalog, db, false, true, false);
+          client.dropDatabase(catalog, db, false, true, cascadeDrop);
           return null;
         });
 

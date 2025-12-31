@@ -1,10 +1,11 @@
 """
 Tests for Lance Hive3 Namespace implementation.
 """
+
 import os
 import pytest
 import tempfile
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 import pyarrow as pa
 
 from lance_namespace_impls.hive3 import Hive3Namespace
@@ -27,7 +28,9 @@ from lance_namespace_urllib3_client.models import (
 def mock_hive_client():
     """Create a mock Hive client."""
     with patch("lance_namespace_impls.hive3.HIVE_AVAILABLE", True):
-        with patch("lance_namespace_impls.hive3.Hive3MetastoreClient") as mock_client_class:
+        with patch(
+            "lance_namespace_impls.hive3.Hive3MetastoreClientWrapper"
+        ) as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value = mock_client
             yield mock_client
@@ -37,10 +40,7 @@ def mock_hive_client():
 def hive_namespace(mock_hive_client):
     """Create a Hive3Namespace instance with mocked client."""
     with patch("lance_namespace_impls.hive3.HIVE_AVAILABLE", True):
-        namespace = Hive3Namespace(
-            uri="thrift://localhost:9083",
-            root="/tmp/warehouse"
-        )
+        namespace = Hive3Namespace(uri="thrift://localhost:9083", root="/tmp/warehouse")
         namespace._client = mock_hive_client
         return namespace
 
@@ -51,11 +51,13 @@ class TestHive3Namespace:
     def test_initialization(self):
         """Test namespace initialization."""
         with patch("lance_namespace_impls.hive3.HIVE_AVAILABLE", True):
-            with patch("lance_namespace_impls.hive3.Hive3MetastoreClient") as mock_client:
+            with patch(
+                "lance_namespace_impls.hive3.Hive3MetastoreClientWrapper"
+            ) as mock_client:
                 namespace = Hive3Namespace(
                     uri="thrift://localhost:9083",
                     root="/tmp/warehouse",
-                    ugi="user:group1,group2"
+                    ugi="user:group1,group2",
                 )
 
                 assert namespace.uri == "thrift://localhost:9083"
@@ -65,7 +67,9 @@ class TestHive3Namespace:
                 mock_client.assert_not_called()
 
                 _ = namespace.client
-                mock_client.assert_called_once_with("thrift://localhost:9083", "user:group1,group2")
+                mock_client.assert_called_once_with(
+                    "thrift://localhost:9083", "user:group1,group2"
+                )
 
     def test_initialization_without_hive_deps(self):
         """Test that initialization fails gracefully without Hive dependencies."""
@@ -90,7 +94,11 @@ class TestHive3Namespace:
     def test_list_namespaces_catalog_level(self, hive_namespace, mock_hive_client):
         """Test listing databases in a catalog."""
         mock_client_instance = MagicMock()
-        mock_client_instance.get_all_databases.return_value = ["default", "test_db", "prod_db"]
+        mock_client_instance.get_all_databases.return_value = [
+            "default",
+            "test_db",
+            "prod_db",
+        ]
         mock_hive_client.__enter__.return_value = mock_client_instance
 
         request = ListNamespacesRequest(id=["hive"])
@@ -138,9 +146,9 @@ class TestHive3Namespace:
 
             request = CreateNamespaceRequest(
                 id=["hive", "test_db"],
-                properties={"comment": "Test database", "owner": "test_user"}
+                properties={"comment": "Test database", "owner": "test_user"},
             )
-            response = hive_namespace.create_namespace(request)
+            hive_namespace.create_namespace(request)
 
             mock_client_instance.create_database.assert_called_once_with(mock_hive_db)
             assert mock_hive_db.name == "test_db"
@@ -152,9 +160,11 @@ class TestHive3Namespace:
         mock_hive_client.__enter__.return_value = mock_client_instance
 
         request = DropNamespaceRequest(id=["hive", "test_db"])
-        response = hive_namespace.drop_namespace(request)
+        hive_namespace.drop_namespace(request)
 
-        mock_client_instance.drop_database.assert_called_once_with("test_db", deleteData=True, cascade=False)
+        mock_client_instance.drop_database.assert_called_once_with(
+            "test_db", deleteData=True, cascade=False
+        )
 
     def test_namespace_exists_database(self, hive_namespace, mock_hive_client):
         """Test checking if a database namespace exists."""
@@ -178,8 +188,16 @@ class TestHive3Namespace:
         mock_table3.parameters = {"table_type": "lance"}
 
         mock_client_instance = MagicMock()
-        mock_client_instance.get_all_tables.return_value = ["table1", "table2", "table3"]
-        mock_client_instance.get_table.side_effect = [mock_table1, mock_table2, mock_table3]
+        mock_client_instance.get_all_tables.return_value = [
+            "table1",
+            "table2",
+            "table3",
+        ]
+        mock_client_instance.get_table.side_effect = [
+            mock_table1,
+            mock_table2,
+            mock_table3,
+        ]
         mock_hive_client.__enter__.return_value = mock_client_instance
 
         request = ListTablesRequest(id=["hive", "test_db"])
@@ -189,7 +207,12 @@ class TestHive3Namespace:
         mock_client_instance.get_all_tables.assert_called_once_with("test_db")
 
     def test_describe_table(self, hive_namespace, mock_hive_client):
-        """Test describing a table with 3-level identifier."""
+        """Test describing a table returns location and storage_options only.
+
+        Note: load_detailed_metadata=false is the only supported mode, which means
+        only location and storage_options are returned. Other fields (version, schema, etc.)
+        are not populated.
+        """
         mock_table = MagicMock()
         mock_table.sd.location = "/tmp/warehouse/test_db/test_table"
         mock_table.parameters = {
@@ -205,7 +228,10 @@ class TestHive3Namespace:
         response = hive_namespace.describe_table(request)
 
         assert response.location == "/tmp/warehouse/test_db/test_table"
-        assert response.version == 42
+        # Only location and storage_options are returned (load_detailed_metadata=false)
+        assert (
+            response.storage_options == {}
+        )  # Empty since no storage.* properties configured
 
         mock_client_instance.get_table.assert_called_once_with("test_db", "test_table")
 
@@ -214,12 +240,11 @@ class TestHive3Namespace:
         with tempfile.TemporaryDirectory() as tmpdir:
             table_path = os.path.join(tmpdir, "test_table")
 
-            data = pa.table({
-                "id": [1, 2, 3],
-                "name": ["Alice", "Bob", "Charlie"]
-            })
+            data = pa.table({"id": [1, 2, 3], "name": ["Alice", "Bob", "Charlie"]})
 
-            with patch("lance_namespace_impls.hive3.lance.dataset") as mock_dataset_func:
+            with patch(
+                "lance_namespace_impls.hive3.lance.dataset"
+            ) as mock_dataset_func:
                 mock_dataset = MagicMock()
                 mock_dataset.schema = data.schema
                 mock_dataset.version = 1
@@ -228,11 +253,18 @@ class TestHive3Namespace:
                 mock_client_instance = MagicMock()
                 mock_hive_client.__enter__.return_value = mock_client_instance
 
-                with patch("lance_namespace_impls.hive3.HiveTable") as mock_hive_table_class, \
-                     patch("lance_namespace_impls.hive3.StorageDescriptor") as mock_sd_class, \
-                     patch("lance_namespace_impls.hive3.SerDeInfo") as mock_serde_class, \
-                     patch("lance_namespace_impls.hive3.FieldSchema") as mock_field_class:
-
+                with (
+                    patch(
+                        "lance_namespace_impls.hive3.HiveTable"
+                    ) as mock_hive_table_class,
+                    patch(
+                        "lance_namespace_impls.hive3.StorageDescriptor"
+                    ) as mock_sd_class,
+                    patch("lance_namespace_impls.hive3.SerDeInfo") as mock_serde_class,
+                    patch(
+                        "lance_namespace_impls.hive3.FieldSchema"
+                    ) as mock_field_class,
+                ):
                     mock_hive_table = MagicMock()
                     mock_hive_table_class.return_value = mock_hive_table
                     mock_sd = MagicMock()
@@ -244,12 +276,14 @@ class TestHive3Namespace:
                     request = RegisterTableRequest(
                         id=["hive", "test_db", "test_table"],
                         location=table_path,
-                        properties={"owner": "test_user"}
+                        properties={"owner": "test_user"},
                     )
                     response = hive_namespace.register_table(request)
 
                     assert response.location == table_path
-                    mock_client_instance.create_table.assert_called_once_with(mock_hive_table)
+                    mock_client_instance.create_table.assert_called_once_with(
+                        mock_hive_table
+                    )
                     assert mock_hive_table.dbName == "test_db"
                     assert mock_hive_table.tableName == "test_table"
 
@@ -295,13 +329,23 @@ class TestHive3Namespace:
     def test_normalize_identifier(self, hive_namespace):
         """Test identifier normalization for 3-level hierarchy."""
         # Single element defaults to (hive, default, table)
-        assert hive_namespace._normalize_identifier(["test_table"]) == ("hive", "default", "test_table")
+        assert hive_namespace._normalize_identifier(["test_table"]) == (
+            "hive",
+            "default",
+            "test_table",
+        )
 
         # Two elements defaults to (hive, database, table)
-        assert hive_namespace._normalize_identifier(["test_db", "test_table"]) == ("hive", "test_db", "test_table")
+        assert hive_namespace._normalize_identifier(["test_db", "test_table"]) == (
+            "hive",
+            "test_db",
+            "test_table",
+        )
 
         # Three elements is (catalog, database, table)
-        assert hive_namespace._normalize_identifier(["my_cat", "test_db", "test_table"]) == ("my_cat", "test_db", "test_table")
+        assert hive_namespace._normalize_identifier(
+            ["my_cat", "test_db", "test_table"]
+        ) == ("my_cat", "test_db", "test_table")
 
         # More than three elements should raise an error
         with pytest.raises(ValueError, match="Invalid identifier"):
@@ -343,7 +387,7 @@ class TestHive3Namespace:
         import pickle
 
         with patch("lance_namespace_impls.hive3.HIVE_AVAILABLE", True):
-            with patch("lance_namespace_impls.hive3.Hive3MetastoreClient"):
+            with patch("lance_namespace_impls.hive3.Hive3MetastoreClientWrapper"):
                 namespace = Hive3Namespace(
                     uri="thrift://localhost:9083",
                     root="/tmp/warehouse",
@@ -351,8 +395,8 @@ class TestHive3Namespace:
                     **{
                         "client.pool-size": "5",
                         "storage.access_key_id": "test-key",
-                        "storage.secret_access_key": "test-secret"
-                    }
+                        "storage.secret_access_key": "test-secret",
+                    },
                 )
 
                 pickled = pickle.dumps(namespace)
@@ -369,7 +413,11 @@ class TestHive3Namespace:
 
                 assert restored._client is None
 
-                with patch("lance_namespace_impls.hive3.Hive3MetastoreClient") as mock_client:
+                with patch(
+                    "lance_namespace_impls.hive3.Hive3MetastoreClientWrapper"
+                ) as mock_client:
                     client = restored.client
                     assert client is not None
-                    mock_client.assert_called_once_with("thrift://localhost:9083", "user:group1,group2")
+                    mock_client.assert_called_once_with(
+                        "thrift://localhost:9083", "user:group1,group2"
+                    )

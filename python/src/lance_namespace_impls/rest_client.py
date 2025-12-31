@@ -118,7 +118,9 @@ class RestClient:
             )
 
             if response.status >= 400:
-                raise RestClientException(response.status, response.data.decode("utf-8"))
+                raise RestClientException(
+                    response.status, response.data.decode("utf-8")
+                )
 
             if response.data:
                 data = response.data.decode("utf-8")

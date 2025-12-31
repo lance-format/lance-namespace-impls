@@ -18,12 +18,12 @@ import org.lance.namespace.model.CreateEmptyTableRequest;
 import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeregisterTableRequest;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
 import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 import org.lance.namespace.model.DropNamespaceRequest;
-import org.lance.namespace.model.DropTableRequest;
 import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
@@ -209,10 +209,10 @@ public class TestHive2NamespaceIntegration {
     ListTablesResponse listResponse = namespace.listTables(listRequest);
     assertThat(listResponse.getTables()).contains(tableName);
 
-    // Drop table
-    DropTableRequest dropRequest = new DropTableRequest();
-    dropRequest.setId(Arrays.asList(testDatabase, tableName));
-    namespace.dropTable(dropRequest);
+    // Deregister table
+    DeregisterTableRequest deregisterRequest = new DeregisterTableRequest();
+    deregisterRequest.setId(Arrays.asList(testDatabase, tableName));
+    namespace.deregisterTable(deregisterRequest);
 
     // Verify table doesn't exist
     assertThatThrownBy(() -> namespace.describeTable(describeRequest))
