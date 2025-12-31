@@ -3,7 +3,7 @@ Integration tests for Iceberg REST Catalog namespace implementation.
 
 This test uses Lakekeeper as the Iceberg REST Catalog implementation.
 To run these tests, start the catalog with:
-  cd docker/lakekeeper && docker-compose up -d
+  cd docker/iceberg && docker-compose up -d
 
 Tests are automatically skipped if the catalog is not available.
 """

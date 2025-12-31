@@ -57,7 +57,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * start the catalog with:
  *
  * <pre>
- *   cd docker/lakekeeper && docker-compose up -d
+ *   cd docker/iceberg && docker-compose up -d
  * </pre>
  *
  * <p>Tests are automatically skipped if the catalog is not available.

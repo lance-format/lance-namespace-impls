@@ -21,7 +21,7 @@ on:
       - python/src/lance_namespace_impls/rest_client.py
       - python/tests/test_iceberg.py
       - python/tests/test_iceberg_integration.py
-      - docker/lakekeeper/**
+      - docker/iceberg/**
       - .github/workflows/python-integ-iceberg.yml
   pull_request:
     types:
@@ -34,7 +34,7 @@ on:
       - python/src/lance_namespace_impls/rest_client.py
       - python/tests/test_iceberg.py
       - python/tests/test_iceberg_integration.py
-      - docker/lakekeeper/**
+      - docker/iceberg/**
       - .github/workflows/python-integ-iceberg.yml
   workflow_dispatch:
 
@@ -67,7 +67,7 @@ jobs:
             done
           ' || {
             echo "Timeout waiting for Iceberg REST Catalog"
-            docker compose -f docker/lakekeeper/docker-compose.yml logs
+            docker compose -f docker/iceberg/docker-compose.yml logs
             exit 1
           }
           echo "Iceberg REST Catalog is ready"
@@ -89,7 +89,7 @@ jobs:
             echo "test_warehouse verified"
           else
             echo "Warning: test_warehouse not found in warehouses: $WAREHOUSES"
-            docker compose -f docker/lakekeeper/docker-compose.yml logs lakekeeper-setup
+            docker compose -f docker/iceberg/docker-compose.yml logs lakekeeper-setup
           fi
       - name: Install dependencies
         working-directory: python
@@ -100,13 +100,13 @@ jobs:
         if: failure()
         run: |
           echo "=== Docker Compose Status ==="
-          docker compose -f docker/lakekeeper/docker-compose.yml ps
+          docker compose -f docker/iceberg/docker-compose.yml ps
           echo ""
           echo "=== Iceberg REST Catalog Logs ==="
-          docker compose -f docker/lakekeeper/docker-compose.yml logs lakekeeper
+          docker compose -f docker/iceberg/docker-compose.yml logs lakekeeper
           echo ""
           echo "=== PostgreSQL Logs ==="
-          docker compose -f docker/lakekeeper/docker-compose.yml logs postgres-lakekeeper
+          docker compose -f docker/iceberg/docker-compose.yml logs postgres-lakekeeper
       - name: Cleanup
         if: always()
         run: make docker-down-iceberg
