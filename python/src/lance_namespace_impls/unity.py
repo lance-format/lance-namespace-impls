@@ -4,12 +4,9 @@ Unity Catalog namespace implementation for Lance.
 
 import io
 import logging
-import os
-import shutil
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-import lance
 import pyarrow as pa
 import pyarrow.ipc as ipc
 
@@ -58,7 +55,6 @@ class UnityNamespaceConfig:
     """Configuration for Unity Catalog namespace."""
 
     ENDPOINT = "unity.endpoint"
-    CATALOG = "unity.catalog"
     ROOT = "unity.root"
     AUTH_TOKEN = "unity.auth_token"
     CONNECT_TIMEOUT = "unity.connect_timeout_millis"
@@ -66,7 +62,6 @@ class UnityNamespaceConfig:
     MAX_RETRIES = "unity.max_retries"
 
     endpoint: str
-    catalog: str
     root: str
     auth_token: Optional[str] = None
     connect_timeout: int = 10000
@@ -78,7 +73,6 @@ class UnityNamespaceConfig:
         if not self.endpoint:
             raise ValueError(f"Required property {self.ENDPOINT} is not set")
 
-        self.catalog = properties.get(self.CATALOG, "unity")
         self.root = properties.get(self.ROOT, "/tmp/lance")
         self.auth_token = properties.get(self.AUTH_TOKEN)
         self.connect_timeout = int(properties.get(self.CONNECT_TIMEOUT, "10000"))
@@ -86,10 +80,13 @@ class UnityNamespaceConfig:
         self.max_retries = int(properties.get(self.MAX_RETRIES, "3"))
 
     def get_full_api_url(self) -> str:
-        """Get the full API URL with /api/2.1 path."""
+        """Get the full API URL with /api/2.1/unity-catalog path."""
         base = self.endpoint.rstrip("/")
-        if not base.endswith("/api/2.1"):
-            base = f"{base}/api/2.1"
+        if not base.endswith("/api/2.1/unity-catalog"):
+            if base.endswith("/api/2.1"):
+                base = f"{base}/unity-catalog"
+            else:
+                base = f"{base}/api/2.1/unity-catalog"
         return base
 
 
@@ -226,32 +223,44 @@ class UnityNamespace(LanceNamespace):
             max_retries=self.config.max_retries,
         )
 
-        logger.info(f"Initialized Unity namespace with endpoint: {self.config.endpoint}")
+        logger.info(
+            f"Initialized Unity namespace with endpoint: {self.config.endpoint}"
+        )
 
     def namespace_id(self) -> str:
         """Return a human-readable unique identifier for this namespace instance."""
-        return f"UnityNamespace {{ endpoint: {self.config.endpoint!r}, catalog: {self.config.catalog!r} }}"
+        return f"UnityNamespace {{ endpoint: {self.config.endpoint!r} }}"
 
     def list_namespaces(self, request: ListNamespacesRequest) -> ListNamespacesResponse:
         """List namespaces."""
         ns_id = self._parse_identifier(request.id)
 
-        if len(ns_id) > 2:
+        if len(ns_id) > 1:
             raise InvalidInputException(
-                f"Expect at most 2-level namespace but get {'.'.join(ns_id)}"
+                f"Expect at most 1-level namespace but get {'.'.join(ns_id)}"
             )
 
         try:
             namespaces = []
 
             if len(ns_id) == 0:
-                namespaces = [self.config.catalog]
+                # List all catalogs
+                params = {}
+                if request.limit:
+                    params["max_results"] = str(request.limit)
+                if request.page_token:
+                    params["page_token"] = request.page_token
+
+                response = self.rest_client.get(
+                    "/catalogs", params=params if params else None
+                )
+
+                if response and "catalogs" in response:
+                    namespaces = [catalog["name"] for catalog in response["catalogs"]]
+
             elif len(ns_id) == 1:
+                # List schemas in a catalog
                 catalog = ns_id[0]
-                if catalog != self.config.catalog:
-                    raise NamespaceNotFoundException(
-                        f"Catalog not found: {catalog}, expected: {self.config.catalog}"
-                    )
 
                 params = {"catalog_name": catalog}
                 if request.limit:
@@ -268,27 +277,30 @@ class UnityNamespace(LanceNamespace):
 
             return ListNamespacesResponse(namespaces=namespaces)
 
-        except (NamespaceNotFoundException, InvalidInputException):
+        except RestClientException as e:
+            if e.is_not_found():
+                raise NamespaceNotFoundException(
+                    f"Namespace not found: {'.'.join(ns_id)}"
+                )
+            raise InternalException(f"Failed to list namespaces: {e}")
+        except InvalidInputException:
             raise
         except Exception as e:
             raise InternalException(f"Failed to list namespaces: {e}")
 
-    def create_namespace(self, request: CreateNamespaceRequest) -> CreateNamespaceResponse:
+    def create_namespace(
+        self, request: CreateNamespaceRequest
+    ) -> CreateNamespaceResponse:
         """Create a new namespace."""
         ns_id = self._parse_identifier(request.id)
 
         if len(ns_id) != 2:
             raise InvalidInputException(
-                f"Expect a 2-level namespace but get {'.'.join(ns_id)}"
+                f"Expect a 2-level namespace (catalog.schema) but get {'.'.join(ns_id)}"
             )
 
         catalog = ns_id[0]
         schema = ns_id[1]
-
-        if catalog != self.config.catalog:
-            raise InvalidInputException(
-                f"Cannot create namespace in catalog {catalog}, expected: {self.config.catalog}"
-            )
 
         try:
             create_schema = CreateSchema(
@@ -322,16 +334,11 @@ class UnityNamespace(LanceNamespace):
 
         if len(ns_id) != 2:
             raise InvalidInputException(
-                f"Expect a 2-level namespace but get {'.'.join(ns_id)}"
+                f"Expect a 2-level namespace (catalog.schema) but get {'.'.join(ns_id)}"
             )
 
         catalog = ns_id[0]
         schema = ns_id[1]
-
-        if catalog != self.config.catalog:
-            raise NamespaceNotFoundException(
-                f"Catalog not found: {catalog}, expected: {self.config.catalog}"
-            )
 
         try:
             full_name = f"{catalog}.{schema}"
@@ -364,16 +371,11 @@ class UnityNamespace(LanceNamespace):
 
         if len(ns_id) != 2:
             raise InvalidInputException(
-                f"Expect a 2-level namespace but get {'.'.join(ns_id)}"
+                f"Expect a 2-level namespace (catalog.schema) but get {'.'.join(ns_id)}"
             )
 
         catalog = ns_id[0]
         schema = ns_id[1]
-
-        if catalog != self.config.catalog:
-            raise InvalidInputException(
-                f"Cannot drop namespace in catalog {catalog}, expected: {self.config.catalog}"
-            )
 
         try:
             full_name = f"{catalog}.{schema}"
@@ -397,16 +399,11 @@ class UnityNamespace(LanceNamespace):
 
         if len(ns_id) != 2:
             raise InvalidInputException(
-                f"Expect a 2-level namespace but get {'.'.join(ns_id)}"
+                f"Expect a 2-level namespace (catalog.schema) but get {'.'.join(ns_id)}"
             )
 
         catalog = ns_id[0]
         schema = ns_id[1]
-
-        if catalog != self.config.catalog:
-            raise NamespaceNotFoundException(
-                f"Catalog not found: {catalog}, expected: {self.config.catalog}"
-            )
 
         try:
             params = {"catalog_name": catalog, "schema_name": schema}
@@ -453,17 +450,12 @@ class UnityNamespace(LanceNamespace):
 
         if len(table_id) != 3:
             raise InvalidInputException(
-                f"Expect a 3-level table identifier but get {'.'.join(table_id)}"
+                f"Expect a 3-level table identifier (catalog.schema.table) but get {'.'.join(table_id)}"
             )
 
         catalog = table_id[0]
         schema = table_id[1]
         table = table_id[2]
-
-        if catalog != self.config.catalog:
-            raise InvalidInputException(
-                f"Cannot create empty table in catalog {catalog}, expected: {self.config.catalog}"
-            )
 
         try:
             table_path = request.location
@@ -473,9 +465,9 @@ class UnityNamespace(LanceNamespace):
             columns = [
                 ColumnInfo(
                     name="__placeholder_id",
-                    type_text="BIGINT",
+                    type_text="LONG",
                     type_json='{"type":"long"}',
-                    type_name="BIGINT",
+                    type_name="LONG",
                     position=0,
                     nullable=True,
                 )
@@ -497,7 +489,7 @@ class UnityNamespace(LanceNamespace):
                 properties=properties,
             )
 
-            table_info = self.rest_client.post(
+            self.rest_client.post(
                 "/tables", create_table, response_converter=_parse_table_info
             )
 
@@ -522,17 +514,12 @@ class UnityNamespace(LanceNamespace):
 
         if len(table_id) != 3:
             raise InvalidInputException(
-                f"Expect a 3-level table identifier but get {'.'.join(table_id)}"
+                f"Expect a 3-level table identifier (catalog.schema.table) but get {'.'.join(table_id)}"
             )
 
         catalog = table_id[0]
         schema = table_id[1]
         table = table_id[2]
-
-        if catalog != self.config.catalog:
-            raise NamespaceNotFoundException(
-                f"Catalog not found: {catalog}, expected: {self.config.catalog}"
-            )
 
         try:
             full_name = f"{catalog}.{schema}.{table}"
@@ -547,14 +534,12 @@ class UnityNamespace(LanceNamespace):
 
             return DescribeTableResponse(
                 location=table_info.storage_location,
-                storage_options=table_info.properties
+                storage_options=table_info.properties,
             )
 
         except RestClientException as e:
             if e.is_not_found():
-                raise TableNotFoundException(
-                    f"Table not found: {'.'.join(request.id)}"
-                )
+                raise TableNotFoundException(f"Table not found: {'.'.join(request.id)}")
             raise InternalException(f"Failed to describe table: {e}")
         except Exception as e:
             if isinstance(
@@ -593,17 +578,12 @@ class UnityNamespace(LanceNamespace):
 
         if len(table_id) != 3:
             raise InvalidInputException(
-                f"Expect a 3-level table identifier but get {'.'.join(table_id)}"
+                f"Expect a 3-level table identifier (catalog.schema.table) but get {'.'.join(table_id)}"
             )
 
         catalog = table_id[0]
         schema = table_id[1]
         table = table_id[2]
-
-        if catalog != self.config.catalog:
-            raise InvalidInputException(
-                f"Cannot deregister table in catalog {catalog}, expected: {self.config.catalog}"
-            )
 
         try:
             full_name = f"{catalog}.{schema}.{table}"
@@ -626,9 +606,7 @@ class UnityNamespace(LanceNamespace):
 
         except RestClientException as e:
             if e.is_not_found():
-                raise TableNotFoundException(
-                    f"Table not found: {'.'.join(request.id)}"
-                )
+                raise TableNotFoundException(f"Table not found: {'.'.join(request.id)}")
             raise InternalException(f"Failed to deregister table: {e}")
         except Exception as e:
             if isinstance(e, (TableNotFoundException, InvalidInputException)):
@@ -672,17 +650,19 @@ class UnityNamespace(LanceNamespace):
     ) -> List[ColumnInfo]:
         """Convert Arrow schema to Unity column definitions."""
         columns = []
-        for i, field in enumerate(arrow_schema):
-            unity_type = self._convert_arrow_type_to_unity_type(field.type)
-            unity_type_json = self._convert_arrow_type_to_unity_type_json(field.type)
+        for i, arrow_field in enumerate(arrow_schema):
+            unity_type = self._convert_arrow_type_to_unity_type(arrow_field.type)
+            unity_type_json = self._convert_arrow_type_to_unity_type_json(
+                arrow_field.type
+            )
 
             column = ColumnInfo(
-                name=field.name,
+                name=arrow_field.name,
                 type_text=unity_type,
                 type_json=unity_type_json,
                 type_name=unity_type,
                 position=i,
-                nullable=field.nullable,
+                nullable=arrow_field.nullable,
             )
             columns.append(column)
 
@@ -695,7 +675,7 @@ class UnityNamespace(LanceNamespace):
         elif pa.types.is_int32(arrow_type):
             return "INT"
         elif pa.types.is_int64(arrow_type):
-            return "BIGINT"
+            return "LONG"
         elif pa.types.is_float32(arrow_type):
             return "FLOAT"
         elif pa.types.is_float64(arrow_type):

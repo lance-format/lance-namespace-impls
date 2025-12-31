@@ -50,8 +50,8 @@ test-hive:
 
 .PHONY: lint-unity
 lint-unity:
-	uv run ruff check src/lance_namespace_impls/unity.py tests/test_unity.py
-	uv run ruff format --check src/lance_namespace_impls/unity.py tests/test_unity.py
+	uv run ruff check src/lance_namespace_impls/unity.py tests/test_unity.py tests/test_unity_integration.py
+	uv run ruff format --check src/lance_namespace_impls/unity.py tests/test_unity.py tests/test_unity_integration.py
 
 .PHONY: install-unity
 install-unity:
@@ -147,4 +147,4 @@ integ-test-polaris:
 
 .PHONY: integ-test-unity
 integ-test-unity:
-	uv run pytest tests/test_unity.py -m integration
+	uv run pytest tests/test_unity_integration.py -v

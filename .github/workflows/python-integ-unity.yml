@@ -18,7 +18,9 @@ on:
       - main
     paths:
       - python/src/lance_namespace_impls/unity.py
+      - python/src/lance_namespace_impls/rest_client.py
       - python/tests/test_unity.py
+      - python/tests/test_unity_integration.py
       - docker/unity/**
       - .github/workflows/python-integ-unity.yml
   pull_request:
@@ -29,7 +31,9 @@ on:
       - reopened
     paths:
       - python/src/lance_namespace_impls/unity.py
+      - python/src/lance_namespace_impls/rest_client.py
       - python/tests/test_unity.py
+      - python/tests/test_unity_integration.py
       - docker/unity/**
       - .github/workflows/python-integ-unity.yml
   workflow_dispatch:

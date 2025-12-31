@@ -121,7 +121,17 @@ class RestClient:
                 raise RestClientException(response.status, response.data.decode("utf-8"))
 
             if response.data:
-                return json.loads(response.data.decode("utf-8"))
+                data = response.data.decode("utf-8")
+                # Handle empty or non-JSON responses (e.g., "200 OK" for DELETE)
+                if not data or data.strip() in ("", "200 OK", "OK"):
+                    return None
+                try:
+                    return json.loads(data)
+                except json.JSONDecodeError:
+                    # If it's not valid JSON, return None for successful responses
+                    if response.status < 300:
+                        return None
+                    raise
             return None
 
         except urllib3.exceptions.HTTPError as e:

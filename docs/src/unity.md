@@ -12,31 +12,25 @@ The Lance Unity namespace implementation accepts the following configuration pro
 
 The **endpoint** property is required and specifies the Unity Catalog REST API endpoint (e.g., `http://localhost:8080`).
 
-The **catalog** property is required and specifies the Unity Catalog name to use.
-
-The **api_path** property is optional and specifies the API path prefix. Default value is `/api/2.1/unity-catalog`.
-
 The **auth_token** property is optional and specifies the bearer token for authentication.
 
-The **connect_timeout** property is optional and specifies the HTTP connection timeout in seconds. Default value is `10`.
+The **connect_timeout** property is optional and specifies the HTTP connection timeout in milliseconds. Default value is `10000` (10 seconds).
 
-The **read_timeout** property is optional and specifies the HTTP read timeout in seconds. Default value is `60`.
+The **read_timeout** property is optional and specifies the HTTP read timeout in milliseconds. Default value is `300000` (5 minutes).
 
 The **max_retries** property is optional and specifies the maximum number of retries for failed requests. Default value is `3`.
 
-The **root** property is optional and specifies the storage root location of the lakehouse. Default value is the current working directory.
-
-The **storage.*** prefix properties are optional and specify additional storage configurations to access tables (e.g., `storage.region=us-west-2`).
+The **root** property is optional and specifies the storage root location for new tables. Default value is `/tmp/lance`.
 
 ## Object Mapping
 
 ### Namespace
 
-The **root namespace** is represented by the configured Unity Catalog. The catalog name is fixed at initialization time.
+The **namespace identifier** follows a hierarchical structure where the first level represents the Unity Catalog, and the second level represents a schema within that catalog. For example, `my_catalog.my_schema` refers to schema `my_schema` in catalog `my_catalog`.
 
-A **child namespace** is a schema within the Unity Catalog. Unity supports a fixed 3-level hierarchy: catalog.schema.table.
+The **root namespace** (empty identifier) lists all available catalogs in the Unity Catalog server.
 
-The **namespace identifier** is constructed by joining the catalog and schema names with the `$` delimiter (e.g., `catalog$schema`). The first level is always the configured catalog.
+A **child namespace** is a schema within a Unity Catalog. Unity supports a fixed 3-level hierarchy: catalog.schema.table.
 
 **Namespace properties** are stored in the Unity schema's properties map.
 
@@ -44,7 +38,7 @@ The **namespace identifier** is constructed by joining the catalog and schema na
 
 A **table** is represented as a [Table](https://github.com/unitycatalog/unitycatalog/blob/main/api/all.yaml) object in Unity Catalog with `table_type` set to `EXTERNAL`.
 
-The **table identifier** is constructed by joining catalog, schema, and table name with the `$` delimiter (e.g., `catalog$schema$table`).
+The **table identifier** is constructed by joining catalog, schema, and table name (e.g., `catalog.schema.table`).
 
 The **table location** is stored in the `storage_location` field of the Unity Table, pointing to the root location of the Lance table.
 
@@ -65,29 +59,28 @@ Creates a new schema in Unity Catalog.
 The implementation:
 
 1. Parse the namespace identifier (must be 2-level: catalog.schema)
-2. Verify the catalog matches the configured catalog
-3. Construct a CreateSchema request with name, catalog name, and properties
-4. POST to `/schemas` endpoint
-5. Return the created schema properties
+2. Construct a CreateSchema request with name, catalog name, and properties
+3. POST to `/schemas` endpoint
+4. Return the created schema properties
 
 **Error Handling:**
 
-If the catalog does not match the configured catalog, return error code `13` (InvalidInput). If the schema already exists, return error code `2` (NamespaceAlreadyExists). If the server returns an error, return error code `18` (Internal).
+If the schema already exists, return error code `2` (NamespaceAlreadyExists). If the server returns an error, return error code `18` (Internal).
 
 ### ListNamespaces
 
-Lists schemas in the Unity Catalog.
+Lists catalogs or schemas in the Unity Catalog.
 
 The implementation:
 
 1. Parse the parent namespace identifier
-2. For root namespace (level 0): return the configured catalog name
-3. For catalog namespace (level 1): GET `/schemas` with catalog_name parameter
+2. For root namespace (level 0): GET `/catalogs` to list all available catalogs
+3. For catalog namespace (level 1): GET `/schemas` with catalog_name parameter to list schemas
 4. Sort the results
 
 **Error Handling:**
 
-If the catalog does not match the configured catalog, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the catalog does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
 
 ### DescribeNamespace
 
@@ -96,9 +89,8 @@ Retrieves properties and metadata for a schema.
 The implementation:
 
 1. Parse the namespace identifier (must be 2-level: catalog.schema)
-2. Verify the catalog matches the configured catalog
-3. GET `/schemas/{catalog}.{schema}`
-4. Return the schema properties
+2. GET `/schemas/{catalog}.{schema}`
+3. Return the schema properties
 
 **Error Handling:**
 
@@ -111,8 +103,7 @@ Removes a schema from Unity Catalog. Only RESTRICT mode is supported; CASCADE mo
 The implementation:
 
 1. Parse the namespace identifier (must be 2-level: catalog.schema)
-2. Verify the catalog matches the configured catalog
-3. DELETE `/schemas/{catalog}.{schema}`
+2. DELETE `/schemas/{catalog}.{schema}`
 
 **Error Handling:**
 
@@ -129,8 +120,7 @@ Declares a new Lance table in Unity Catalog without creating the underlying data
 The implementation:
 
 1. Parse the table identifier (must be 3-level: catalog.schema.table)
-2. Verify the catalog matches the configured catalog
-3. Construct a CreateTable request with:
+2. Construct a CreateTable request with:
     - `name`: the table name
     - `catalog_name`: the catalog
     - `schema_name`: the schema
@@ -138,8 +128,8 @@ The implementation:
     - `data_source_format`: `TEXT`
     - `storage_location`: the specified or default location
     - `properties`: including `table_type=lance`
-4. POST to `/tables` endpoint
-5. Return the created table location and properties
+3. POST to `/tables` endpoint
+4. Return the created table location and properties
 
 **Error Handling:**
 
@@ -152,10 +142,9 @@ Lists all Lance tables in a schema.
 The implementation:
 
 1. Parse the namespace identifier (must be 2-level: catalog.schema)
-2. Verify the catalog matches the configured catalog
-3. GET `/tables` with catalog_name and schema_name parameters
-4. Filter tables where `properties.table_type=lance`
-5. Sort the results
+2. GET `/tables` with catalog_name and schema_name parameters
+3. Filter tables where `properties.table_type=lance`
+4. Sort the results
 
 **Error Handling:**
 
@@ -168,10 +157,9 @@ Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is sup
 The implementation:
 
 1. Parse the table identifier (must be 3-level: catalog.schema.table)
-2. Verify the catalog matches the configured catalog
-3. GET `/tables/{catalog}.{schema}.{table}`
-4. Verify the table is a Lance table (check `properties.table_type=lance`)
-5. Return the table location from `storage_location` and storage_options from `properties`
+2. GET `/tables/{catalog}.{schema}.{table}`
+3. Verify the table is a Lance table (check `properties.table_type=lance`)
+4. Return the table location from `storage_location` and storage_options from `properties`
 
 **Error Handling:**
 
@@ -188,9 +176,8 @@ Removes a Lance table registration from Unity Catalog without deleting the under
 The implementation:
 
 1. Parse the table identifier (must be 3-level: catalog.schema.table)
-2. Verify the catalog matches the configured catalog
-3. GET the table and verify it is a Lance table
-4. DELETE `/tables/{catalog}.{schema}.{table}`
+2. GET the table and verify it is a Lance table
+3. DELETE `/tables/{catalog}.{schema}.{table}`
 
 **Error Handling:**
 

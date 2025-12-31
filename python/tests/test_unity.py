@@ -3,30 +3,19 @@ Tests for Unity Catalog namespace implementation.
 """
 
 import unittest
-from unittest.mock import Mock, patch, MagicMock
-import json
-import io
+from unittest.mock import patch, MagicMock
 
 import pyarrow as pa
-import pyarrow.ipc as ipc
 
 from lance_namespace_impls.unity import (
     UnityNamespace,
     UnityNamespaceConfig,
     SchemaInfo,
     TableInfo,
-    ColumnInfo,
 )
 from lance_namespace_impls.rest_client import (
     RestClient,
     RestClientException,
-    NamespaceException,
-    NamespaceNotFoundException,
-    NamespaceAlreadyExistsException,
-    TableNotFoundException,
-    TableAlreadyExistsException,
-    InvalidInputException,
-    InternalException,
 )
 from lance_namespace_urllib3_client.models import (
     ListNamespacesRequest,
@@ -43,69 +32,74 @@ from lance_namespace_urllib3_client.models import (
 
 class TestUnityNamespaceConfig(unittest.TestCase):
     """Test Unity namespace configuration."""
-    
+
     def test_config_initialization(self):
         """Test configuration initialization with required properties."""
         properties = {
             "unity.endpoint": "https://unity.example.com",
-            "unity.catalog": "test_catalog",
             "unity.root": "/data/lance",
-            "unity.auth_token": "test_token"
+            "unity.auth_token": "test_token",
         }
-        
+
         config = UnityNamespaceConfig(properties)
-        
+
         self.assertEqual(config.endpoint, "https://unity.example.com")
-        self.assertEqual(config.catalog, "test_catalog")
         self.assertEqual(config.root, "/data/lance")
         self.assertEqual(config.auth_token, "test_token")
-    
+
     def test_config_defaults(self):
         """Test configuration with default values."""
-        properties = {
-            "unity.endpoint": "https://unity.example.com"
-        }
-        
+        properties = {"unity.endpoint": "https://unity.example.com"}
+
         config = UnityNamespaceConfig(properties)
-        
-        self.assertEqual(config.catalog, "unity")
+
         self.assertEqual(config.root, "/tmp/lance")
         self.assertIsNone(config.auth_token)
         self.assertEqual(config.connect_timeout, 10000)
         self.assertEqual(config.read_timeout, 300000)
         self.assertEqual(config.max_retries, 3)
-    
+
     def test_config_missing_endpoint(self):
         """Test configuration fails without endpoint."""
         properties = {}
-        
+
         with self.assertRaises(ValueError) as context:
             UnityNamespaceConfig(properties)
-        
+
         self.assertIn("unity.endpoint", str(context.exception))
-    
+
     def test_get_full_api_url(self):
         """Test API URL generation."""
-        properties = {
-            "unity.endpoint": "https://unity.example.com"
-        }
+        properties = {"unity.endpoint": "https://unity.example.com"}
         config = UnityNamespaceConfig(properties)
-        
-        self.assertEqual(config.get_full_api_url(), "https://unity.example.com/api/2.1")
-        
+
+        self.assertEqual(
+            config.get_full_api_url(), "https://unity.example.com/api/2.1/unity-catalog"
+        )
+
         # Test with endpoint already containing /api/2.1
+        properties = {"unity.endpoint": "https://unity.example.com/api/2.1"}
+        config = UnityNamespaceConfig(properties)
+
+        self.assertEqual(
+            config.get_full_api_url(), "https://unity.example.com/api/2.1/unity-catalog"
+        )
+
+        # Test with endpoint already containing full path
         properties = {
-            "unity.endpoint": "https://unity.example.com/api/2.1"
+            "unity.endpoint": "https://unity.example.com/api/2.1/unity-catalog"
         }
         config = UnityNamespaceConfig(properties)
-        
-        self.assertEqual(config.get_full_api_url(), "https://unity.example.com/api/2.1")
+
+        self.assertEqual(
+            config.get_full_api_url(), "https://unity.example.com/api/2.1/unity-catalog"
+        )
 
 
 class TestRestClient(unittest.TestCase):
     """Test REST client functionality."""
-    
-    @patch('lance_namespace_impls.rest_client.urllib3.PoolManager')
+
+    @patch("lance_namespace_impls.rest_client.urllib3.PoolManager")
     def test_get_request(self, mock_pool_manager):
         """Test GET request."""
         mock_http = MagicMock()
@@ -122,7 +116,7 @@ class TestRestClient(unittest.TestCase):
         self.assertEqual(result, {"name": "test_schema"})
         mock_http.request.assert_called_once()
 
-    @patch('lance_namespace_impls.rest_client.urllib3.PoolManager')
+    @patch("lance_namespace_impls.rest_client.urllib3.PoolManager")
     def test_post_request(self, mock_pool_manager):
         """Test POST request."""
         mock_http = MagicMock()
@@ -139,7 +133,7 @@ class TestRestClient(unittest.TestCase):
         self.assertEqual(result, {"id": "123"})
         mock_http.request.assert_called_once()
 
-    @patch('lance_namespace_impls.rest_client.urllib3.PoolManager')
+    @patch("lance_namespace_impls.rest_client.urllib3.PoolManager")
     def test_delete_request(self, mock_pool_manager):
         """Test DELETE request."""
         mock_http = MagicMock()
@@ -147,7 +141,7 @@ class TestRestClient(unittest.TestCase):
 
         mock_response = MagicMock()
         mock_response.status = 204
-        mock_response.data = b''
+        mock_response.data = b""
         mock_http.request.return_value = mock_response
 
         client = RestClient("https://api.example.com")
@@ -155,7 +149,7 @@ class TestRestClient(unittest.TestCase):
 
         mock_http.request.assert_called_once()
 
-    @patch('lance_namespace_impls.rest_client.urllib3.PoolManager')
+    @patch("lance_namespace_impls.rest_client.urllib3.PoolManager")
     def test_error_response(self, mock_pool_manager):
         """Test error response handling."""
         mock_http = MagicMock()
@@ -177,90 +171,85 @@ class TestRestClient(unittest.TestCase):
 
 class TestUnityNamespace(unittest.TestCase):
     """Test Unity namespace implementation."""
-    
+
     def setUp(self):
         """Set up test fixtures."""
         self.properties = {
             "unity.endpoint": "https://unity.example.com",
-            "unity.catalog": "test_catalog",
-            "unity.root": "/data/lance"
+            "unity.root": "/data/lance",
         }
-    
-    @patch('lance_namespace_impls.unity.RestClient')
+
+    @patch("lance_namespace_impls.unity.RestClient")
     def test_list_namespaces_top_level(self, mock_rest_client_class):
         """Test listing top-level namespaces (catalogs)."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
-        
+
+        mock_client.get.return_value = {
+            "catalogs": [{"name": "catalog1"}, {"name": "catalog2"}]
+        }
+
         namespace = UnityNamespace(**self.properties)
-        
+
         request = ListNamespacesRequest()
         request.id = []
-        
+
         response = namespace.list_namespaces(request)
-        
-        self.assertEqual(response.namespaces, ["test_catalog"])
-        mock_client.get.assert_not_called()
-    
-    @patch('lance_namespace_impls.unity.RestClient')
+
+        self.assertEqual(sorted(response.namespaces), ["catalog1", "catalog2"])
+        mock_client.get.assert_called_once_with("/catalogs", params=None)
+
+    @patch("lance_namespace_impls.unity.RestClient")
     def test_list_namespaces_schemas(self, mock_rest_client_class):
         """Test listing schemas in a catalog."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
-        
+
         mock_client.get.return_value = {
-            "schemas": [
-                {"name": "schema1"},
-                {"name": "schema2"}
-            ]
+            "schemas": [{"name": "schema1"}, {"name": "schema2"}]
         }
-        
+
         namespace = UnityNamespace(**self.properties)
-        
+
         request = ListNamespacesRequest()
         request.id = ["test_catalog"]
-        
+
         response = namespace.list_namespaces(request)
-        
+
         self.assertEqual(sorted(response.namespaces), ["schema1", "schema2"])
         mock_client.get.assert_called_once_with(
-            '/schemas',
-            params={'catalog_name': 'test_catalog'}
+            "/schemas", params={"catalog_name": "test_catalog"}
         )
-    
-    @patch('lance_namespace_impls.unity.RestClient')
+
+    @patch("lance_namespace_impls.unity.RestClient")
     def test_create_namespace(self, mock_rest_client_class):
         """Test creating a namespace."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
-        
+
         mock_schema_info = SchemaInfo(
-            name="test_schema",
-            catalog_name="test_catalog",
-            properties={"key": "value"}
+            name="test_schema", catalog_name="test_catalog", properties={"key": "value"}
         )
         mock_client.post.return_value = mock_schema_info
-        
+
         namespace = UnityNamespace(**self.properties)
-        
+
         request = CreateNamespaceRequest()
         request.id = ["test_catalog", "test_schema"]
         request.properties = {"key": "value"}
-        
+
         response = namespace.create_namespace(request)
-        
+
         self.assertEqual(response.properties, {"key": "value"})
-    
-    @patch('lance_namespace_impls.unity.RestClient')
+
+    @patch("lance_namespace_impls.unity.RestClient")
     def test_describe_namespace(self, mock_rest_client_class):
         """Test describing a namespace."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
 
         mock_schema_info = SchemaInfo(
-            name="test_schema",
-            catalog_name="test_catalog",
-            properties={"key": "value"}
+            name="test_schema", catalog_name="test_catalog", properties={"key": "value"}
         )
         mock_client.get.return_value = mock_schema_info
 
@@ -273,8 +262,8 @@ class TestUnityNamespace(unittest.TestCase):
 
         self.assertEqual(response.properties, {"key": "value"})
         mock_client.get.assert_called_once()
-    
-    @patch('lance_namespace_impls.unity.RestClient')
+
+    @patch("lance_namespace_impls.unity.RestClient")
     def test_drop_namespace(self, mock_rest_client_class):
         """Test dropping a namespace."""
         mock_client = MagicMock()
@@ -289,32 +278,32 @@ class TestUnityNamespace(unittest.TestCase):
 
         self.assertIsNotNone(response)
         mock_client.delete.assert_called_once()
-    
-    @patch('lance_namespace_impls.unity.RestClient')
+
+    @patch("lance_namespace_impls.unity.RestClient")
     def test_list_tables(self, mock_rest_client_class):
         """Test listing tables in a namespace."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
-        
+
         mock_client.get.return_value = {
             "tables": [
                 {"name": "table1", "properties": {"table_type": "lance"}},
                 {"name": "table2", "properties": {"table_type": "delta"}},
-                {"name": "table3", "properties": {"table_type": "lance"}}
+                {"name": "table3", "properties": {"table_type": "lance"}},
             ]
         }
-        
+
         namespace = UnityNamespace(**self.properties)
-        
+
         request = ListTablesRequest()
         request.id = ["test_catalog", "test_schema"]
-        
+
         response = namespace.list_tables(request)
-        
+
         # Should only return Lance tables
         self.assertEqual(sorted(response.tables), ["table1", "table3"])
-    
-    @patch('lance_namespace_impls.unity.RestClient')
+
+    @patch("lance_namespace_impls.unity.RestClient")
     def test_create_table_not_supported(self, mock_rest_client_class):
         """Test that create_table raises NotImplementedError."""
         mock_client = MagicMock()
@@ -329,13 +318,13 @@ class TestUnityNamespace(unittest.TestCase):
             namespace.create_table(request, b"test_data")
 
         self.assertIn("create_table is not supported", str(context.exception))
-    
-    @patch('lance_namespace_impls.unity.RestClient')
+
+    @patch("lance_namespace_impls.unity.RestClient")
     def test_create_empty_table(self, mock_rest_client_class):
         """Test creating an empty table."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
-        
+
         mock_table_info = TableInfo(
             name="test_table",
             catalog_name="test_catalog",
@@ -344,26 +333,27 @@ class TestUnityNamespace(unittest.TestCase):
             data_source_format="TEXT",
             columns=[],
             storage_location="/data/lance/test_catalog/test_schema/test_table",
-            properties={"table_type": "lance"}
+            properties={"table_type": "lance"},
         )
         mock_client.post.return_value = mock_table_info
-        
+
         namespace = UnityNamespace(**self.properties)
-        
+
         request = CreateEmptyTableRequest()
         request.id = ["test_catalog", "test_schema", "test_table"]
-        
+
         response = namespace.create_empty_table(request)
-        
-        self.assertEqual(response.location, "/data/lance/test_catalog/test_schema/test_table")
-    
-    @patch('lance_namespace_impls.unity.lance')
-    @patch('lance_namespace_impls.unity.RestClient')
-    def test_describe_table(self, mock_rest_client_class, mock_lance):
+
+        self.assertEqual(
+            response.location, "/data/lance/test_catalog/test_schema/test_table"
+        )
+
+    @patch("lance_namespace_impls.unity.RestClient")
+    def test_describe_table(self, mock_rest_client_class):
         """Test describing a table."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
-        
+
         mock_table_info = TableInfo(
             name="test_table",
             catalog_name="test_catalog",
@@ -372,25 +362,22 @@ class TestUnityNamespace(unittest.TestCase):
             data_source_format="TEXT",
             columns=[],
             storage_location="/data/lance/test_catalog/test_schema/test_table",
-            properties={"table_type": "lance"}
+            properties={"table_type": "lance"},
         )
         mock_client.get.return_value = mock_table_info
-        
-        # Mock Lance dataset
-        mock_dataset = MagicMock()
-        mock_dataset.schema = pa.schema([pa.field("id", pa.int64())])
-        mock_lance.dataset.return_value = mock_dataset
-        
+
         namespace = UnityNamespace(**self.properties)
-        
+
         request = DescribeTableRequest()
         request.id = ["test_catalog", "test_schema", "test_table"]
-        
+
         response = namespace.describe_table(request)
 
-        self.assertEqual(response.location, "/data/lance/test_catalog/test_schema/test_table")
-    
-    @patch('lance_namespace_impls.unity.RestClient')
+        self.assertEqual(
+            response.location, "/data/lance/test_catalog/test_schema/test_table"
+        )
+
+    @patch("lance_namespace_impls.unity.RestClient")
     def test_drop_table_not_supported(self, mock_rest_client_class):
         """Test that drop_table raises NotImplementedError."""
         mock_client = MagicMock()
@@ -405,35 +392,73 @@ class TestUnityNamespace(unittest.TestCase):
             namespace.drop_table(request)
 
         self.assertIn("drop_table is not supported", str(context.exception))
-    
+
     def test_arrow_type_conversion(self):
         """Test Arrow type to Unity type conversion."""
         namespace = UnityNamespace(**self.properties)
-        
+
         # Test various Arrow types
-        self.assertEqual(namespace._convert_arrow_type_to_unity_type(pa.string()), "STRING")
+        self.assertEqual(
+            namespace._convert_arrow_type_to_unity_type(pa.string()), "STRING"
+        )
         self.assertEqual(namespace._convert_arrow_type_to_unity_type(pa.int32()), "INT")
-        self.assertEqual(namespace._convert_arrow_type_to_unity_type(pa.int64()), "BIGINT")
-        self.assertEqual(namespace._convert_arrow_type_to_unity_type(pa.float32()), "FLOAT")
-        self.assertEqual(namespace._convert_arrow_type_to_unity_type(pa.float64()), "DOUBLE")
-        self.assertEqual(namespace._convert_arrow_type_to_unity_type(pa.bool_()), "BOOLEAN")
-        self.assertEqual(namespace._convert_arrow_type_to_unity_type(pa.date32()), "DATE")
-        self.assertEqual(namespace._convert_arrow_type_to_unity_type(pa.timestamp('us')), "TIMESTAMP")
-    
+        self.assertEqual(
+            namespace._convert_arrow_type_to_unity_type(pa.int64()), "LONG"
+        )
+        self.assertEqual(
+            namespace._convert_arrow_type_to_unity_type(pa.float32()), "FLOAT"
+        )
+        self.assertEqual(
+            namespace._convert_arrow_type_to_unity_type(pa.float64()), "DOUBLE"
+        )
+        self.assertEqual(
+            namespace._convert_arrow_type_to_unity_type(pa.bool_()), "BOOLEAN"
+        )
+        self.assertEqual(
+            namespace._convert_arrow_type_to_unity_type(pa.date32()), "DATE"
+        )
+        self.assertEqual(
+            namespace._convert_arrow_type_to_unity_type(pa.timestamp("us")), "TIMESTAMP"
+        )
+
     def test_arrow_type_to_json_conversion(self):
         """Test Arrow type to Unity JSON type conversion."""
         namespace = UnityNamespace(**self.properties)
-        
+
         # Test various Arrow types
-        self.assertEqual(namespace._convert_arrow_type_to_unity_type_json(pa.string()), '{"type":"string"}')
-        self.assertEqual(namespace._convert_arrow_type_to_unity_type_json(pa.int32()), '{"type":"integer"}')
-        self.assertEqual(namespace._convert_arrow_type_to_unity_type_json(pa.int64()), '{"type":"long"}')
-        self.assertEqual(namespace._convert_arrow_type_to_unity_type_json(pa.float32()), '{"type":"float"}')
-        self.assertEqual(namespace._convert_arrow_type_to_unity_type_json(pa.float64()), '{"type":"double"}')
-        self.assertEqual(namespace._convert_arrow_type_to_unity_type_json(pa.bool_()), '{"type":"boolean"}')
-        self.assertEqual(namespace._convert_arrow_type_to_unity_type_json(pa.date32()), '{"type":"date"}')
-        self.assertEqual(namespace._convert_arrow_type_to_unity_type_json(pa.timestamp('us')), '{"type":"timestamp"}')
+        self.assertEqual(
+            namespace._convert_arrow_type_to_unity_type_json(pa.string()),
+            '{"type":"string"}',
+        )
+        self.assertEqual(
+            namespace._convert_arrow_type_to_unity_type_json(pa.int32()),
+            '{"type":"integer"}',
+        )
+        self.assertEqual(
+            namespace._convert_arrow_type_to_unity_type_json(pa.int64()),
+            '{"type":"long"}',
+        )
+        self.assertEqual(
+            namespace._convert_arrow_type_to_unity_type_json(pa.float32()),
+            '{"type":"float"}',
+        )
+        self.assertEqual(
+            namespace._convert_arrow_type_to_unity_type_json(pa.float64()),
+            '{"type":"double"}',
+        )
+        self.assertEqual(
+            namespace._convert_arrow_type_to_unity_type_json(pa.bool_()),
+            '{"type":"boolean"}',
+        )
+        self.assertEqual(
+            namespace._convert_arrow_type_to_unity_type_json(pa.date32()),
+            '{"type":"date"}',
+        )
+        self.assertEqual(
+            namespace._convert_arrow_type_to_unity_type_json(pa.timestamp("us")),
+            '{"type":"timestamp"}',
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
