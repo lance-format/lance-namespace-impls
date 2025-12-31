@@ -229,6 +229,10 @@ public class UnityNamespace implements LanceNamespace, Closeable {
 
   @Override
   public DropNamespaceResponse dropNamespace(DropNamespaceRequest request) {
+    if ("Cascade".equalsIgnoreCase(request.getBehavior())) {
+      throw new InvalidInputException("Cascade behavior is not supported for this implementation");
+    }
+
     ObjectIdentifier nsId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(nsId.levels() == 2, "Expect a 2-level namespace but get %s", nsId);
 
@@ -363,6 +367,11 @@ public class UnityNamespace implements LanceNamespace, Closeable {
 
   @Override
   public DescribeTableResponse describeTable(DescribeTableRequest request) {
+    if (Boolean.TRUE.equals(request.getLoadDetailedMetadata())) {
+      throw new InvalidInputException(
+          "load_detailed_metadata=true is not supported for this implementation");
+    }
+
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
         tableId.levels() == 3, "Expect a 3-level table identifier but get %s", tableId);

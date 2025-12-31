@@ -197,6 +197,10 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
 
   @Override
   public DropNamespaceResponse dropNamespace(DropNamespaceRequest request) {
+    if ("Cascade".equalsIgnoreCase(request.getBehavior())) {
+      throw new InvalidInputException("Cascade behavior is not supported for this implementation");
+    }
+
     ObjectIdentifier namespaceId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
         namespaceId.levels() >= 2, "Namespace must have at least catalog and namespace levels");
@@ -311,6 +315,11 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
 
   @Override
   public DescribeTableResponse describeTable(DescribeTableRequest request) {
+    if (Boolean.TRUE.equals(request.getLoadDetailedMetadata())) {
+      throw new InvalidInputException(
+          "load_detailed_metadata=true is not supported for this implementation");
+    }
+
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
         tableId.levels() >= 3, "Table identifier must have catalog, namespace, and table name");

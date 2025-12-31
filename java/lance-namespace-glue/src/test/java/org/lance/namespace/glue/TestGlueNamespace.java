@@ -13,6 +13,7 @@
  */
 package org.lance.namespace.glue;
 
+import org.lance.namespace.errors.InvalidInputException;
 import org.lance.namespace.errors.LanceNamespaceException;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
@@ -79,7 +80,6 @@ import static org.lance.namespace.glue.GlueNamespace.LANCE_TABLE_TYPE_VALUE;
 import static org.lance.namespace.glue.GlueNamespace.TABLE_TYPE_PROP;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -443,7 +443,7 @@ public class TestGlueNamespace {
   }
 
   @Test
-  public void testDropNamespaceWithCascadeBehaviorHasTables() {
+  public void testDropNamespaceWithCascadeBehaviorRejected() {
     String namespaceName = "ns1";
     DropNamespaceRequest request =
         new DropNamespaceRequest()
@@ -451,26 +451,8 @@ public class TestGlueNamespace {
             .mode("Fail")
             .behavior("Cascade");
 
-    Database database = Database.builder().name(namespaceName).build();
-    Table table1 = Table.builder().name("table1").build();
-    Table table2 = Table.builder().name("table2").build();
-
-    // Mock database call
-    when(glue.getDatabase(any(GetDatabaseRequest.class)))
-        .thenReturn(GetDatabaseResponse.builder().database(database).build());
-
-    // Mock get tables for cascade
-    when(glue.getTables(any(GetTablesRequest.class)))
-        .thenReturn(GetTablesResponse.builder().tableList(table1, table2).build());
-
-    when(glue.deleteDatabase(any(DeleteDatabaseRequest.class)))
-        .thenReturn(DeleteDatabaseResponse.builder().build());
-
-    glueNamespace.dropNamespace(request);
-
-    verify(glue).getTables(any(GetTablesRequest.class));
-    verify(glue, times(2)).deleteTable(any(DeleteTableRequest.class));
-    verify(glue).deleteDatabase(any(DeleteDatabaseRequest.class));
+    // CASCADE behavior should be rejected
+    assertThrows(InvalidInputException.class, () -> glueNamespace.dropNamespace(request));
   }
 
   @Test

@@ -14,6 +14,7 @@
 package org.lance.namespace.hive3;
 
 import org.lance.namespace.LanceNamespace;
+import org.lance.namespace.errors.InvalidInputException;
 import org.lance.namespace.errors.LanceNamespaceException;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceRequest;
@@ -327,35 +328,15 @@ public class TestHive3Namespace {
   }
 
   @Test
-  public void testDropNamespaceBasicCatalog() {
-    // Setup: Create catalog
-    CreateNamespaceRequest catalogRequest = new CreateNamespaceRequest();
-    catalogRequest.setId(Lists.list("test_catalog_basic"));
-    catalogRequest.setMode("Create");
-
-    Map<String, String> properties = Maps.newHashMap();
-    properties.put("description", "Test catalog for dropping");
-    catalogRequest.setProperties(properties);
-
-    namespace.createNamespace(catalogRequest);
-
-    // Test: Drop the catalog with CASCADE (since Hive creates default database automatically)
+  public void testDropNamespaceCascadeRejected() {
+    // Test: Drop with CASCADE behavior - should be rejected
     DropNamespaceRequest dropRequest = new DropNamespaceRequest();
     dropRequest.setId(Lists.list("test_catalog_basic"));
     dropRequest.setBehavior("Cascade");
 
-    DropNamespaceResponse response = namespace.dropNamespace(dropRequest);
-
-    // Verify properties were returned
-    assertEquals("Test catalog for dropping", response.getProperties().get("description"));
-
-    // Verify catalog was dropped
-    NamespaceExistsRequest existsRequest = new NamespaceExistsRequest();
-    existsRequest.setId(Lists.list("test_catalog_basic"));
-
     Exception error =
-        assertThrows(LanceNamespaceException.class, () -> namespace.namespaceExists(existsRequest));
-    assertTrue(error.getMessage().contains("Namespace does not exist"));
+        assertThrows(InvalidInputException.class, () -> namespace.dropNamespace(dropRequest));
+    assertTrue(error.getMessage().contains("Cascade behavior is not supported"));
   }
 
   @Test

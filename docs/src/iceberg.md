@@ -10,23 +10,16 @@ Apache Iceberg REST Catalog is a standardized REST API for interacting with Iceb
 
 The Lance Iceberg REST Catalog namespace implementation accepts the following configuration properties:
 
-The **endpoint** property is required and specifies the Iceberg REST Catalog server endpoint URL (e.g., `http://localhost:8181`). Must start with `http://` or `https://`.
-
-The **warehouse** property is optional and specifies the warehouse identifier to use. Some Iceberg REST implementations require this.
-
-The **prefix** property is optional and specifies the API path prefix (e.g., `v1`). Default value is empty.
-
-The **auth_token** property is optional and specifies the bearer token for authentication.
-
-The **credential** property is optional and specifies the OAuth2 client credential in the format `client_id:client_secret` for client credentials authentication flow.
-
-The **connect_timeout** property is optional and specifies the connection timeout in milliseconds. Default value is `10000` (10 seconds).
-
-The **read_timeout** property is optional and specifies the read timeout in milliseconds. Default value is `30000` (30 seconds).
-
-The **max_retries** property is optional and specifies the maximum number of retries for failed requests. Default value is `3`.
-
-The **root** property is optional and specifies the default storage root location for tables. Default value is the current working directory.
+| Property | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `endpoint` | Yes | - | Iceberg REST Catalog server endpoint URL (e.g., `http://localhost:8181`). Must start with `http://` or `https://`. |
+| `warehouse` | No | - | Warehouse identifier. Some Iceberg REST implementations require this. The warehouse name is resolved to an API prefix via the `/v1/config` endpoint. |
+| `auth_token` | No | - | Bearer token for authentication. |
+| `credential` | No | - | OAuth2 client credential in `client_id:client_secret` format for client credentials authentication flow. |
+| `connect_timeout` | No | `10000` | Connection timeout in milliseconds. |
+| `read_timeout` | No | `30000` | Read timeout in milliseconds. |
+| `max_retries` | No | `3` | Maximum number of retries for failed requests. |
+| `root` | No | current working directory | Default storage root location for tables. |
 
 ## Object Mapping
 
@@ -110,7 +103,7 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound).
+If the namespace does not exist, the operation succeeds (idempotent behavior).
 
 If the namespace is not empty, return error code `3` (NamespaceNotEmpty).
 
@@ -125,11 +118,11 @@ The implementation:
 1. Parse the table identifier to extract namespace and table name
 2. Construct a CreateTableRequest with:
     - `name`: the table name
-    - `location`: the specified or default location
+    - `location`: the specified or default location (defaults to `{root}/{prefix}/{namespace}/{table_name}`)
     - `schema`: a dummy Iceberg schema with a single nullable string column `dummy`
     - `properties`: table properties including `table_type=lance`
 3. POST to `/v1/{prefix}/namespaces/{namespace}/tables`
-4. Return the created table location and properties
+4. Return the declared table location
 
 **Error Handling:**
 

@@ -24,6 +24,8 @@ import org.lance.namespace.model.CreateEmptyTableRequest;
 import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeclareTableRequest;
+import org.lance.namespace.model.DeclareTableResponse;
 import org.lance.namespace.model.DeregisterTableRequest;
 import org.lance.namespace.model.DeregisterTableResponse;
 import org.lance.namespace.model.DescribeNamespaceRequest;
@@ -272,6 +274,10 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
 
   @Override
   public DropNamespaceResponse dropNamespace(DropNamespaceRequest request) {
+    if ("Cascade".equalsIgnoreCase(request.getBehavior())) {
+      throw new InvalidInputException("Cascade behavior is not supported for this implementation");
+    }
+
     ObjectIdentifier nsId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
         nsId.levels() >= 2, "Namespace must have at least prefix and namespace levels");
@@ -343,7 +349,7 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
   }
 
   @Override
-  public CreateEmptyTableResponse createEmptyTable(CreateEmptyTableRequest request) {
+  public DeclareTableResponse declareTable(DeclareTableRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
         tableId.levels() >= 3, "Table identifier must have prefix, namespace, and table name");
@@ -371,15 +377,14 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
       createRequest.setProperties(properties);
 
       String namespacePath = encodeNamespace(namespace);
-      IcebergModels.LoadTableResponse response =
-          restClient.post(
-              prefixPath + "/namespaces/" + namespacePath + "/tables",
-              createRequest,
-              IcebergModels.LoadTableResponse.class);
+      restClient.post(
+          prefixPath + "/namespaces/" + namespacePath + "/tables",
+          createRequest,
+          IcebergModels.LoadTableResponse.class);
 
-      LOG.info("Created Lance table: {}", tableId.stringStyleId());
+      LOG.info("Declared Lance table: {}", tableId.stringStyleId());
 
-      CreateEmptyTableResponse result = new CreateEmptyTableResponse();
+      DeclareTableResponse result = new DeclareTableResponse();
       result.setLocation(tablePath);
       return result;
     } catch (RestClientException e) {
@@ -390,12 +395,32 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
         throw new NamespaceNotFoundException(
             "Namespace not found: " + prefix + "." + String.join(".", namespace));
       }
-      throw new InternalException("Failed to create table: " + e.getMessage());
+      throw new InternalException("Failed to declare table: " + e.getMessage());
     }
+  }
+
+  /**
+   * @deprecated Use {@link #declareTable(DeclareTableRequest)} instead.
+   */
+  @Deprecated
+  @Override
+  public CreateEmptyTableResponse createEmptyTable(CreateEmptyTableRequest request) {
+    DeclareTableRequest declareRequest = new DeclareTableRequest();
+    declareRequest.setId(request.getId());
+    declareRequest.setLocation(request.getLocation());
+    DeclareTableResponse response = declareTable(declareRequest);
+    CreateEmptyTableResponse result = new CreateEmptyTableResponse();
+    result.setLocation(response.getLocation());
+    return result;
   }
 
   @Override
   public DescribeTableResponse describeTable(DescribeTableRequest request) {
+    if (Boolean.TRUE.equals(request.getLoadDetailedMetadata())) {
+      throw new InvalidInputException(
+          "load_detailed_metadata=true is not supported for this implementation");
+    }
+
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
         tableId.levels() >= 3, "Table identifier must have prefix, namespace, and table name");

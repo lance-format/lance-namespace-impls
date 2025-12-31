@@ -13,6 +13,7 @@
  */
 package org.lance.namespace.hive2;
 
+import org.lance.namespace.errors.InvalidInputException;
 import org.lance.namespace.errors.LanceNamespaceException;
 import org.lance.namespace.model.CreateEmptyTableRequest;
 import org.lance.namespace.model.CreateEmptyTableResponse;
@@ -114,7 +115,7 @@ public class TestHive2NamespaceIntegration {
       // Clean up test database
       DropNamespaceRequest dropRequest = new DropNamespaceRequest();
       dropRequest.setId(Collections.singletonList(testDatabase));
-      dropRequest.setBehavior("Cascade");
+      dropRequest.setBehavior("Restrict");
       namespace.dropNamespace(dropRequest);
     } catch (Exception e) {
       // Ignore cleanup errors
@@ -220,29 +221,14 @@ public class TestHive2NamespaceIntegration {
   }
 
   @Test
-  public void testCascadeDropDatabase() {
-    // Create database
-    CreateNamespaceRequest nsRequest = new CreateNamespaceRequest();
-    nsRequest.setId(Collections.singletonList(testDatabase));
-    namespace.createNamespace(nsRequest);
-
-    // Create a table in the database
-    String tableName = "cascade_test_table";
-    CreateEmptyTableRequest tableRequest = new CreateEmptyTableRequest();
-    tableRequest.setId(Arrays.asList(testDatabase, tableName));
-    tableRequest.setLocation("/tmp/lance-integration-test/" + testDatabase + "/" + tableName);
-    namespace.createEmptyTable(tableRequest);
-
-    // Drop database with cascade
+  public void testCascadeDropDatabaseRejected() {
+    // Drop database with cascade - should be rejected
     DropNamespaceRequest dropRequest = new DropNamespaceRequest();
     dropRequest.setId(Collections.singletonList(testDatabase));
     dropRequest.setBehavior("Cascade");
-    namespace.dropNamespace(dropRequest);
 
-    // Verify database doesn't exist
-    DescribeNamespaceRequest describeRequest = new DescribeNamespaceRequest();
-    describeRequest.setId(Collections.singletonList(testDatabase));
-    assertThatThrownBy(() -> namespace.describeNamespace(describeRequest))
-        .isInstanceOf(LanceNamespaceException.class);
+    assertThatThrownBy(() -> namespace.dropNamespace(dropRequest))
+        .isInstanceOf(InvalidInputException.class)
+        .hasMessageContaining("Cascade behavior is not supported");
   }
 }

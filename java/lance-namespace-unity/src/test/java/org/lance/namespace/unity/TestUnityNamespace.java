@@ -139,7 +139,7 @@ public class TestUnityNamespace {
     try {
       DropNamespaceRequest dropRequest = new DropNamespaceRequest();
       dropRequest.setId(Arrays.asList(UNITY_CATALOG, TEST_SCHEMA));
-      dropRequest.setBehavior("Cascade");
+      dropRequest.setBehavior("Restrict");
       namespace.dropNamespace(dropRequest);
     } catch (Exception e) {
       // Ignore cleanup errors
