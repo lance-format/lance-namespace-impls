@@ -8,6 +8,7 @@ For example: [warehouse_name, namespace1, namespace2, ..., table_name]
 
 import logging
 import urllib.parse
+import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -17,6 +18,8 @@ from lance_namespace_urllib3_client.models import (
     CreateEmptyTableResponse,
     CreateNamespaceRequest,
     CreateNamespaceResponse,
+    DeclareTableRequest,
+    DeclareTableResponse,
     DeregisterTableRequest,
     DeregisterTableResponse,
     DescribeNamespaceRequest,
@@ -29,8 +32,6 @@ from lance_namespace_urllib3_client.models import (
     ListNamespacesResponse,
     ListTablesRequest,
     ListTablesResponse,
-    NamespaceExistsRequest,
-    TableExistsRequest,
 )
 
 from lance_namespace_impls.rest_client import (
@@ -53,14 +54,14 @@ NAMESPACE_SEPARATOR = "\x1f"
 class IcebergNamespaceConfig:
     """Configuration for Iceberg REST Catalog namespace."""
 
-    ENDPOINT = "iceberg.endpoint"
-    WAREHOUSE = "iceberg.warehouse"
-    AUTH_TOKEN = "iceberg.auth_token"
-    CREDENTIAL = "iceberg.credential"
-    CONNECT_TIMEOUT = "iceberg.connect_timeout_millis"
-    READ_TIMEOUT = "iceberg.read_timeout_millis"
-    MAX_RETRIES = "iceberg.max_retries"
-    ROOT = "iceberg.root"
+    ENDPOINT = "endpoint"
+    WAREHOUSE = "warehouse"
+    AUTH_TOKEN = "auth_token"
+    CREDENTIAL = "credential"
+    CONNECT_TIMEOUT = "connect_timeout"
+    READ_TIMEOUT = "read_timeout"
+    MAX_RETRIES = "max_retries"
+    ROOT = "root"
 
     endpoint: str
     warehouse: Optional[str] = None
@@ -69,9 +70,11 @@ class IcebergNamespaceConfig:
     connect_timeout: int = 10000
     read_timeout: int = 30000
     max_retries: int = 3
-    root: str = "/tmp/lance"
+    root: str = ""
 
     def __init__(self, properties: Dict[str, str]):
+        import os
+
         self.endpoint = properties.get(self.ENDPOINT)
         if not self.endpoint:
             raise ValueError(f"Required property {self.ENDPOINT} is not set")
@@ -82,7 +85,7 @@ class IcebergNamespaceConfig:
         self.connect_timeout = int(properties.get(self.CONNECT_TIMEOUT, "10000"))
         self.read_timeout = int(properties.get(self.READ_TIMEOUT, "30000"))
         self.max_retries = int(properties.get(self.MAX_RETRIES, "3"))
-        self.root = properties.get(self.ROOT, "/tmp/lance")
+        self.root = properties.get(self.ROOT, os.getcwd())
 
     def get_base_api_url(self) -> str:
         """Get the base API URL without prefix."""
@@ -307,18 +310,17 @@ class IcebergNamespace(LanceNamespace):
         except Exception as e:
             raise InternalException(f"Failed to describe namespace: {e}")
 
-    def namespace_exists(self, request: NamespaceExistsRequest) -> None:
-        """Check if a namespace exists."""
-        describe_request = DescribeNamespaceRequest()
-        describe_request.id = request.id
-        self.describe_namespace(describe_request)
-
     def drop_namespace(self, request: DropNamespaceRequest) -> DropNamespaceResponse:
         """Drop a namespace.
 
         The first element of request.id is treated as the prefix (warehouse).
         Remaining elements are the namespace to drop.
         """
+        if request.behavior and request.behavior.lower() == "cascade":
+            raise InvalidInputException(
+                "Cascade behavior is not supported for this implementation"
+            )
+
         ns_id = self._parse_identifier(request.id)
 
         if len(ns_id) < 2:
@@ -399,10 +401,8 @@ class IcebergNamespace(LanceNamespace):
         except Exception as e:
             raise InternalException(f"Failed to list tables: {e}")
 
-    def create_empty_table(
-        self, request: CreateEmptyTableRequest
-    ) -> CreateEmptyTableResponse:
-        """Create an empty table (metadata only operation).
+    def declare_table(self, request: DeclareTableRequest) -> DeclareTableResponse:
+        """Declare a table (metadata only operation).
 
         The first element of request.id is treated as the prefix (warehouse).
         Middle elements are the namespace, last element is the table name.
@@ -441,9 +441,9 @@ class IcebergNamespace(LanceNamespace):
                 f"{prefix_path}/namespaces/{namespace_path}/tables", create_request
             )
 
-            logger.info(f"Created table: {'.'.join(table_id)}")
+            logger.info(f"Declared table: {'.'.join(table_id)}")
 
-            return CreateEmptyTableResponse(location=table_path)
+            return DeclareTableResponse(location=table_path)
 
         except RestClientException as e:
             if e.is_conflict():
@@ -454,7 +454,7 @@ class IcebergNamespace(LanceNamespace):
                 raise NamespaceNotFoundException(
                     f"Namespace not found: {prefix}.{'.'.join(namespace)}"
                 )
-            raise InternalException(f"Failed to create empty table: {e}")
+            raise InternalException(f"Failed to declare table: {e}")
         except (
             TableAlreadyExistsException,
             NamespaceNotFoundException,
@@ -462,7 +462,26 @@ class IcebergNamespace(LanceNamespace):
         ):
             raise
         except Exception as e:
-            raise InternalException(f"Failed to create empty table: {e}")
+            raise InternalException(f"Failed to declare table: {e}")
+
+    def create_empty_table(
+        self, request: CreateEmptyTableRequest
+    ) -> CreateEmptyTableResponse:
+        """Create an empty table (metadata only operation).
+
+        .. deprecated::
+            Use :meth:`declare_table` instead.
+        """
+        warnings.warn(
+            "create_empty_table is deprecated, use declare_table instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        declare_request = DeclareTableRequest()
+        declare_request.id = request.id
+        declare_request.location = request.location
+        response = self.declare_table(declare_request)
+        return CreateEmptyTableResponse(location=response.location)
 
     def describe_table(self, request: DescribeTableRequest) -> DescribeTableResponse:
         """Describe a table.
@@ -470,6 +489,11 @@ class IcebergNamespace(LanceNamespace):
         The first element of request.id is treated as the prefix (warehouse).
         Middle elements are the namespace, last element is the table name.
         """
+        if request.load_detailed_metadata:
+            raise InvalidInputException(
+                "load_detailed_metadata=true is not supported for this implementation"
+            )
+
         table_id = self._parse_identifier(request.id)
 
         if len(table_id) < 3:
@@ -516,12 +540,6 @@ class IcebergNamespace(LanceNamespace):
             raise
         except Exception as e:
             raise InternalException(f"Failed to describe table: {e}")
-
-    def table_exists(self, request: TableExistsRequest) -> None:
-        """Check if a table exists."""
-        describe_request = DescribeTableRequest()
-        describe_request.id = request.id
-        self.describe_table(describe_request)
 
     def deregister_table(
         self, request: DeregisterTableRequest

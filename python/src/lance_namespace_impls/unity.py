@@ -16,8 +16,6 @@ from lance_namespace_urllib3_client.models import (
     CreateEmptyTableResponse,
     CreateNamespaceRequest,
     CreateNamespaceResponse,
-    CreateTableRequest,
-    CreateTableResponse,
     DeregisterTableRequest,
     DeregisterTableResponse,
     DescribeNamespaceRequest,
@@ -26,14 +24,10 @@ from lance_namespace_urllib3_client.models import (
     DescribeTableResponse,
     DropNamespaceRequest,
     DropNamespaceResponse,
-    DropTableRequest,
-    DropTableResponse,
     ListNamespacesRequest,
     ListNamespacesResponse,
     ListTablesRequest,
     ListTablesResponse,
-    NamespaceExistsRequest,
-    TableExistsRequest,
 )
 
 from lance_namespace_impls.rest_client import (
@@ -359,14 +353,13 @@ class UnityNamespace(LanceNamespace):
                 raise
             raise InternalException(f"Failed to describe namespace: {e}")
 
-    def namespace_exists(self, request: NamespaceExistsRequest) -> None:
-        """Check if a namespace exists."""
-        describe_request = DescribeNamespaceRequest()
-        describe_request.id = request.id
-        self.describe_namespace(describe_request)
-
     def drop_namespace(self, request: DropNamespaceRequest) -> DropNamespaceResponse:
         """Drop a namespace."""
+        if request.behavior and request.behavior.lower() == "cascade":
+            raise InvalidInputException(
+                "Cascade behavior is not supported for this implementation"
+            )
+
         ns_id = self._parse_identifier(request.id)
 
         if len(ns_id) != 2:
@@ -428,19 +421,6 @@ class UnityNamespace(LanceNamespace):
             raise
         except Exception as e:
             raise InternalException(f"Failed to list tables: {e}")
-
-    def create_table(
-        self, request: CreateTableRequest, request_data: bytes
-    ) -> CreateTableResponse:
-        """Create a new table with data from Arrow IPC stream.
-
-        This operation is not supported. Use create_empty_table to declare table metadata,
-        then use Lance SDK to create the actual table data.
-        """
-        raise NotImplementedError(
-            "create_table is not supported. Use create_empty_table to declare table metadata, "
-            "then use Lance SDK to create the actual table data."
-        )
 
     def create_empty_table(
         self, request: CreateEmptyTableRequest
@@ -510,6 +490,11 @@ class UnityNamespace(LanceNamespace):
 
     def describe_table(self, request: DescribeTableRequest) -> DescribeTableResponse:
         """Describe a table."""
+        if request.load_detailed_metadata:
+            raise InvalidInputException(
+                "load_detailed_metadata=true is not supported for this implementation"
+            )
+
         table_id = self._parse_identifier(request.id)
 
         if len(table_id) != 3:
@@ -552,23 +537,6 @@ class UnityNamespace(LanceNamespace):
             ):
                 raise
             raise InternalException(f"Failed to describe table: {e}")
-
-    def table_exists(self, request: TableExistsRequest) -> None:
-        """Check if a table exists."""
-        describe_request = DescribeTableRequest()
-        describe_request.id = request.id
-        self.describe_table(describe_request)
-
-    def drop_table(self, request: DropTableRequest) -> DropTableResponse:
-        """Drop a table.
-
-        This operation is not supported. Use deregister_table to remove table metadata,
-        then use Lance SDK to delete the actual table data if needed.
-        """
-        raise NotImplementedError(
-            "drop_table is not supported. Use deregister_table to remove table metadata, "
-            "then use Lance SDK to delete the actual table data if needed."
-        )
 
     def deregister_table(
         self, request: DeregisterTableRequest

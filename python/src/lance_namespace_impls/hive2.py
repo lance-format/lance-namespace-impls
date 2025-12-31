@@ -22,30 +22,6 @@ Usage:
     from lance_namespace import ListNamespacesRequest
     response = namespace.list_namespaces(ListNamespacesRequest())
 
-    # Create a table
-    from lance_namespace import CreateTableRequest
-    import pyarrow as pa
-    import io
-
-    data = pa.table({"col1": [1, 2, 3], "col2": ["a", "b", "c"]})
-    buf = io.BytesIO()
-    with pa.ipc.new_stream(buf, data.schema) as writer:
-        writer.write_table(data)
-
-    request = CreateTableRequest(
-        id=["my_database", "my_table"],
-        mode="create"
-    )
-    response = namespace.create_table(request, buf.getvalue())
-
-    # Register existing Lance table
-    from lance_namespace import RegisterTableRequest
-    request = RegisterTableRequest(
-        id=["my_database", "existing_table"],
-        location="/path/to/lance/table"
-    )
-    response = namespace.register_table(request)
-
 Configuration Properties:
     uri (str): Hive Metastore Thrift URI (e.g., "thrift://localhost:9083")
     root (str): Storage root location of the lakehouse on Hive catalog (default: current working directory)
@@ -87,9 +63,6 @@ except ImportError:
     InvalidOperationException = None
     MetaException = None
 
-import lance
-import pyarrow as pa
-
 from lance.namespace import LanceNamespace
 from lance_namespace_urllib3_client.models import (
     ListNamespacesRequest,
@@ -100,23 +73,17 @@ from lance_namespace_urllib3_client.models import (
     CreateNamespaceResponse,
     DropNamespaceRequest,
     DropNamespaceResponse,
-    NamespaceExistsRequest,
     ListTablesRequest,
     ListTablesResponse,
-    CreateTableRequest,
-    CreateTableResponse,
     CreateEmptyTableRequest,
     CreateEmptyTableResponse,
-    DropTableRequest,
-    DropTableResponse,
     DescribeTableRequest,
     DescribeTableResponse,
-    RegisterTableRequest,
-    RegisterTableResponse,
     DeregisterTableRequest,
     DeregisterTableResponse,
-    TableExistsRequest,
 )
+
+from lance_namespace_impls.rest_client import InvalidInputException
 
 logger = logging.getLogger(__name__)
 
@@ -331,6 +298,11 @@ class Hive2Namespace(LanceNamespace):
 
     def drop_namespace(self, request: DropNamespaceRequest) -> DropNamespaceResponse:
         """Drop a database from the Hive Metastore. Only RESTRICT mode is supported."""
+        if request.behavior and request.behavior.lower() == "cascade":
+            raise InvalidInputException(
+                "Cascade behavior is not supported for this implementation"
+            )
+
         try:
             # Cannot drop root namespace
             if self._is_root_namespace(request.id):
@@ -355,26 +327,6 @@ class Hive2Namespace(LanceNamespace):
             if NoSuchObjectException and isinstance(e, NoSuchObjectException):
                 raise ValueError(f"Namespace {request.id} does not exist")
             logger.error(f"Failed to drop namespace {request.id}: {e}")
-            raise
-
-    def namespace_exists(self, request: NamespaceExistsRequest) -> None:
-        """Check if a database exists in the Hive Metastore."""
-        try:
-            # Root namespace always exists
-            if self._is_root_namespace(request.id):
-                return
-
-            if len(request.id) != 1:
-                raise ValueError(f"Invalid namespace identifier: {request.id}")
-
-            database_name = request.id[0]
-
-            with self.client as client:
-                client.get_database(database_name)
-        except Exception as e:
-            if NoSuchObjectException and isinstance(e, NoSuchObjectException):
-                raise ValueError(f"Namespace {request.id} does not exist")
-            logger.error(f"Failed to check namespace existence {request.id}: {e}")
             raise
 
     def list_tables(self, request: ListTablesRequest) -> ListTablesResponse:
@@ -421,6 +373,11 @@ class Hive2Namespace(LanceNamespace):
 
         Only load_detailed_metadata=false is supported. Returns location and storage_options only.
         """
+        if request.load_detailed_metadata:
+            raise ValueError(
+                "load_detailed_metadata=true is not supported for this implementation"
+            )
+
         try:
             database, table_name = self._normalize_identifier(request.id)
 
@@ -447,137 +404,6 @@ class Hive2Namespace(LanceNamespace):
                 raise ValueError(f"Table {request.id} does not exist")
             logger.error(f"Failed to describe table {request.id}: {e}")
             raise
-
-    def register_table(self, request: RegisterTableRequest) -> RegisterTableResponse:
-        """Register an existing Lance table in the Hive Metastore.
-
-        Note: This will open the Lance dataset to get schema and version information.
-        If you want to avoid opening the dataset, you can provide 'version' in properties.
-        """
-        try:
-            database, table_name = self._normalize_identifier(request.id)
-
-            # Determine managed_by value
-            managed_by = (
-                request.properties.get(MANAGED_BY_KEY, "storage")
-                if request.properties
-                else "storage"
-            )
-
-            # We always need to open the dataset to get schema for Hive columns
-            dataset = lance.dataset(request.location)
-            schema = dataset.schema
-
-            # Only track version if managed_by is "impl"
-            version = None
-            if managed_by == "impl":
-                # Get version from properties or dataset
-                version = (
-                    request.properties.get(VERSION_KEY) if request.properties else None
-                )
-                if version is None:
-                    version = str(dataset.version)
-
-            # Create Hive table object
-            if not HiveTable:
-                raise ImportError("Hive dependencies not available")
-            hive_table = HiveTable()
-            hive_table.dbName = database
-            hive_table.tableName = table_name
-            hive_table.owner = (
-                request.properties.get("owner", os.getenv("USER", ""))
-                if request.properties
-                else os.getenv("USER", "")
-            )
-            # Use current time if file doesn't exist yet
-            import time
-
-            current_time = int(time.time())
-            try:
-                hive_table.createTime = int(os.path.getctime(request.location))
-                hive_table.lastAccessTime = int(os.path.getatime(request.location))
-            except (OSError, FileNotFoundError):
-                hive_table.createTime = current_time
-                hive_table.lastAccessTime = current_time
-            hive_table.tableType = EXTERNAL_TABLE
-
-            # Set storage descriptor
-            if not StorageDescriptor:
-                raise ImportError("Hive dependencies not available")
-            sd = StorageDescriptor()
-            sd.location = request.location
-            sd.inputFormat = "com.lancedb.lance.mapred.LanceInputFormat"
-            sd.outputFormat = "com.lancedb.lance.mapred.LanceOutputFormat"
-            sd.compressed = False
-            sd.cols = self._pyarrow_schema_to_hive_fields(schema)
-
-            # Set SerDe info
-            if not SerDeInfo:
-                raise ImportError("Hive dependencies not available")
-            serde = SerDeInfo()
-            serde.serializationLib = "com.lancedb.lance.mapred.LanceSerDe"
-            sd.serdeInfo = serde
-
-            hive_table.sd = sd
-
-            # Set table parameters per hive.md specification
-            hive_table.parameters = {
-                TABLE_TYPE_KEY: LANCE_TABLE_FORMAT,
-                MANAGED_BY_KEY: managed_by,
-            }
-
-            # Only set version if managed_by is "impl"
-            if managed_by == "impl" and version is not None:
-                hive_table.parameters[VERSION_KEY] = version
-
-            if request.properties:
-                # Add other properties but don't override the required ones
-                for k, v in request.properties.items():
-                    if k not in [TABLE_TYPE_KEY, MANAGED_BY_KEY, VERSION_KEY]:
-                        hive_table.parameters[k] = v
-
-            with self.client as client:
-                client.create_table(hive_table)
-
-            return RegisterTableResponse(
-                location=request.location, properties=request.properties
-            )
-        except Exception as e:
-            if AlreadyExistsException and isinstance(e, AlreadyExistsException):
-                raise ValueError(f"Table {request.id} already exists")
-            logger.error(f"Failed to register table {request.id}: {e}")
-            raise
-
-    def table_exists(self, request: TableExistsRequest) -> None:
-        """Check if a table exists in the Hive Metastore."""
-        try:
-            database, table_name = self._normalize_identifier(request.id)
-
-            with self.client as client:
-                table = client.get_table(database, table_name)
-
-                # Check if it's a Lance table (case insensitive)
-                if not table.parameters:
-                    raise ValueError(f"Table {request.id} is not a Lance table")
-                table_type = table.parameters.get(TABLE_TYPE_KEY, "").lower()
-                if table_type != LANCE_TABLE_FORMAT:
-                    raise ValueError(f"Table {request.id} is not a Lance table")
-        except Exception as e:
-            if NoSuchObjectException and isinstance(e, NoSuchObjectException):
-                raise ValueError(f"Table {request.id} does not exist")
-            logger.error(f"Failed to check table existence {request.id}: {e}")
-            raise
-
-    def drop_table(self, request: DropTableRequest) -> DropTableResponse:
-        """Drop a table from the Hive Metastore.
-
-        This operation is not supported. Use deregister_table to remove table metadata,
-        then use Lance SDK to delete the actual table data if needed.
-        """
-        raise NotImplementedError(
-            "drop_table is not supported. Use deregister_table to remove table metadata, "
-            "then use Lance SDK to delete the actual table data if needed."
-        )
 
     def deregister_table(
         self, request: DeregisterTableRequest
@@ -608,19 +434,6 @@ class Hive2Namespace(LanceNamespace):
                 raise ValueError(f"Table {request.id} does not exist")
             logger.error(f"Failed to deregister table {request.id}: {e}")
             raise
-
-    def create_table(
-        self, request: CreateTableRequest, request_data: bytes
-    ) -> CreateTableResponse:
-        """Create a new Lance table and register it in the Hive Metastore.
-
-        This operation is not supported. Use create_empty_table to declare table metadata,
-        then use Lance SDK to create the actual table data.
-        """
-        raise NotImplementedError(
-            "create_table is not supported. Use create_empty_table to declare table metadata, "
-            "then use Lance SDK to create the actual table data."
-        )
 
     def create_empty_table(
         self, request: CreateEmptyTableRequest
@@ -686,54 +499,6 @@ class Hive2Namespace(LanceNamespace):
         except Exception as e:
             logger.error(f"Failed to create empty table {request.id}: {e}")
             raise
-
-    def _pyarrow_schema_to_hive_fields(self, schema: pa.Schema) -> List[FieldSchema]:
-        """Convert PyArrow schema to Hive field schemas."""
-        fields = []
-        for field in schema:
-            hive_type = self._pyarrow_type_to_hive_type(field.type)
-            if not FieldSchema:
-                raise ImportError("Hive dependencies not available")
-            hive_field = FieldSchema(name=field.name, type=hive_type, comment="")
-            fields.append(hive_field)
-        return fields
-
-    def _pyarrow_type_to_hive_type(self, dtype: pa.DataType) -> str:
-        """Convert PyArrow data type to Hive type string."""
-        if pa.types.is_boolean(dtype):
-            return "boolean"
-        elif pa.types.is_int8(dtype):
-            return "tinyint"
-        elif pa.types.is_int16(dtype):
-            return "smallint"
-        elif pa.types.is_int32(dtype):
-            return "int"
-        elif pa.types.is_int64(dtype):
-            return "bigint"
-        elif pa.types.is_float32(dtype):
-            return "float"
-        elif pa.types.is_float64(dtype):
-            return "double"
-        elif pa.types.is_string(dtype):
-            return "string"
-        elif pa.types.is_binary(dtype):
-            return "binary"
-        elif pa.types.is_timestamp(dtype):
-            return "timestamp"
-        elif pa.types.is_date32(dtype) or pa.types.is_date64(dtype):
-            return "date"
-        elif pa.types.is_list(dtype):
-            inner_type = self._pyarrow_type_to_hive_type(dtype.value_type)
-            return f"array<{inner_type}>"
-        elif pa.types.is_struct(dtype):
-            field_strs = []
-            for i in range(dtype.num_fields):
-                field = dtype.field(i)
-                field_type = self._pyarrow_type_to_hive_type(field.type)
-                field_strs.append(f"{field.name}:{field_type}")
-            return f"struct<{','.join(field_strs)}>"
-        else:
-            return "string"  # Default to string for unknown types
 
     def __getstate__(self):
         """Prepare instance for pickling by excluding unpickleable objects."""

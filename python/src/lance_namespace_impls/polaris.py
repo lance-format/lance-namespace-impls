@@ -24,8 +24,6 @@ from lance_namespace_urllib3_client.models import (
     ListNamespacesResponse,
     ListTablesRequest,
     ListTablesResponse,
-    NamespaceExistsRequest,
-    TableExistsRequest,
 )
 
 from lance_namespace_impls.rest_client import (
@@ -216,14 +214,13 @@ class PolarisNamespace(LanceNamespace):
         except Exception as e:
             raise InternalException(f"Failed to describe namespace: {e}")
 
-    def namespace_exists(self, request: NamespaceExistsRequest) -> None:
-        """Check if a namespace exists."""
-        describe_request = DescribeNamespaceRequest()
-        describe_request.id = request.id
-        self.describe_namespace(describe_request)
-
     def drop_namespace(self, request: DropNamespaceRequest) -> DropNamespaceResponse:
         """Drop a namespace. Only RESTRICT mode is supported."""
+        if request.behavior and request.behavior.lower() == "cascade":
+            raise InvalidInputException(
+                "Cascade behavior is not supported for this implementation"
+            )
+
         ns_id = self._parse_identifier(request.id)
 
         if len(ns_id) < 2:
@@ -350,6 +347,11 @@ class PolarisNamespace(LanceNamespace):
 
         Only load_detailed_metadata=false is supported. Returns location and storage_options only.
         """
+        if request.load_detailed_metadata:
+            raise InvalidInputException(
+                "load_detailed_metadata=true is not supported for this implementation"
+            )
+
         table_id = self._parse_identifier(request.id)
 
         if len(table_id) < 3:
@@ -392,12 +394,6 @@ class PolarisNamespace(LanceNamespace):
             raise
         except Exception as e:
             raise InternalException(f"Failed to describe table: {e}")
-
-    def table_exists(self, request: TableExistsRequest) -> None:
-        """Check if a table exists."""
-        describe_request = DescribeTableRequest()
-        describe_request.id = request.id
-        self.describe_table(describe_request)
 
     def deregister_table(
         self, request: DeregisterTableRequest

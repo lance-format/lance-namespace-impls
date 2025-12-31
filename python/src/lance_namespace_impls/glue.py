@@ -14,9 +14,6 @@ except ImportError:
     Config = None
     HAS_BOTO3 = False
 
-import lance
-import pyarrow as pa
-
 from lance.namespace import LanceNamespace
 from lance_namespace_urllib3_client.models import (
     ListNamespacesRequest,
@@ -27,24 +24,17 @@ from lance_namespace_urllib3_client.models import (
     CreateNamespaceResponse,
     DropNamespaceRequest,
     DropNamespaceResponse,
-    NamespaceExistsRequest,
     ListTablesRequest,
     ListTablesResponse,
-    CreateTableRequest,
-    CreateTableResponse,
     CreateEmptyTableRequest,
     CreateEmptyTableResponse,
-    DropTableRequest,
-    DropTableResponse,
     DescribeTableRequest,
     DescribeTableResponse,
-    RegisterTableRequest,
-    RegisterTableResponse,
     DeregisterTableRequest,
     DeregisterTableResponse,
-    TableExistsRequest,
 )
 
+from lance_namespace_impls.rest_client import InvalidInputException
 
 LANCE_TABLE_TYPE = "LANCE"
 TABLE_TYPE = "table_type"
@@ -282,6 +272,11 @@ class GlueNamespace(LanceNamespace):
 
     def drop_namespace(self, request: DropNamespaceRequest) -> DropNamespaceResponse:
         """Drop a namespace (database) in Glue."""
+        if request.behavior and request.behavior.lower() == "cascade":
+            raise InvalidInputException(
+                "Cascade behavior is not supported for this implementation"
+            )
+
         # Handle root namespace
         if not request.id or len(request.id) == 0:
             raise RuntimeError("Cannot drop root namespace")
@@ -306,25 +301,6 @@ class GlueNamespace(LanceNamespace):
             if isinstance(e, RuntimeError):
                 raise
             raise RuntimeError(f"Failed to drop namespace: {e}")
-
-    def namespace_exists(self, request: NamespaceExistsRequest) -> None:
-        """Check if a namespace exists."""
-        # Handle root namespace - it always exists
-        if not request.id or len(request.id) == 0:
-            return  # Root namespace always exists
-
-        if len(request.id) != 1:
-            raise ValueError("Glue namespace requires exactly one level identifier")
-
-        database_name = request.id[0]
-
-        try:
-            self.glue.get_database(Name=database_name)
-        except Exception as e:
-            error_name = e.__class__.__name__ if hasattr(e, "__class__") else ""
-            if error_name == "EntityNotFoundException":
-                raise RuntimeError(f"Namespace does not exist: {database_name}")
-            raise RuntimeError(f"Failed to check namespace existence: {e}")
 
     def list_tables(self, request: ListTablesRequest) -> ListTablesResponse:
         """List tables in a namespace."""
@@ -367,6 +343,11 @@ class GlueNamespace(LanceNamespace):
 
     def describe_table(self, request: DescribeTableRequest) -> DescribeTableResponse:
         """Describe a table."""
+        if request.load_detailed_metadata:
+            raise RuntimeError(
+                "load_detailed_metadata=true is not supported for this implementation"
+            )
+
         database_name, table_name = self._parse_table_identifier(request.id)
 
         try:
@@ -396,19 +377,6 @@ class GlueNamespace(LanceNamespace):
             if isinstance(e, RuntimeError):
                 raise
             raise RuntimeError(f"Failed to describe table: {e}")
-
-    def create_table(
-        self, request: CreateTableRequest, request_data: bytes
-    ) -> CreateTableResponse:
-        """Create a table with data from Arrow IPC stream.
-
-        This operation is not supported. Use create_empty_table to declare table metadata,
-        then use Lance SDK to create the actual table data.
-        """
-        raise NotImplementedError(
-            "create_table is not supported. Use create_empty_table to declare table metadata, "
-            "then use Lance SDK to create the actual table data."
-        )
 
     def create_empty_table(
         self, request: CreateEmptyTableRequest
@@ -473,59 +441,6 @@ class GlueNamespace(LanceNamespace):
 
         return CreateEmptyTableResponse(location=table_location)
 
-    def drop_table(self, request: DropTableRequest) -> DropTableResponse:
-        """Drop a table - deletes both the Lance dataset and Glue catalog entry.
-
-        This operation is not supported. Use deregister_table to remove table metadata,
-        then use Lance SDK to delete the actual table data if needed.
-        """
-        raise NotImplementedError(
-            "drop_table is not supported. Use deregister_table to remove table metadata, "
-            "then use Lance SDK to delete the actual table data if needed."
-        )
-
-    def register_table(self, request: RegisterTableRequest) -> RegisterTableResponse:
-        """Register an existing Lance table in Glue."""
-        database_name, table_name = self._parse_table_identifier(request.id)
-
-        if not request.location:
-            raise ValueError("Location is required to register a table")
-
-        # Read Lance dataset to get schema
-        try:
-            dataset = lance.dataset(
-                request.location, storage_options=self.config.storage_options
-            )
-            schema = dataset.schema
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to read Lance dataset at {request.location}: {e}"
-            )
-
-        # Create Glue table entry
-        table_input = {
-            "Name": table_name,
-            "TableType": EXTERNAL_TABLE,
-            "Parameters": {
-                TABLE_TYPE: LANCE_TABLE_TYPE,
-            },
-            "StorageDescriptor": {
-                "Location": request.location,
-                "Columns": self._convert_pyarrow_schema_to_glue_columns(schema),
-            },
-        }
-
-        try:
-            self.glue.create_table(DatabaseName=database_name, TableInput=table_input)
-            return RegisterTableResponse(location=request.location)
-        except Exception as e:
-            error_name = e.__class__.__name__ if hasattr(e, "__class__") else ""
-            if error_name == "AlreadyExistsException":
-                raise RuntimeError(
-                    f"Table already exists: {database_name}.{table_name}"
-                )
-            raise RuntimeError(f"Failed to register table: {e}")
-
     def deregister_table(
         self, request: DeregisterTableRequest
     ) -> DeregisterTableResponse:
@@ -544,26 +459,6 @@ class GlueNamespace(LanceNamespace):
                 )
             raise RuntimeError(f"Failed to deregister table: {e}")
 
-    def table_exists(self, request: TableExistsRequest) -> None:
-        """Check if a table exists."""
-        database_name, table_name = self._parse_table_identifier(request.id)
-
-        try:
-            response = self.glue.get_table(DatabaseName=database_name, Name=table_name)
-            if not self._is_lance_table(response["Table"]):
-                raise RuntimeError(
-                    f"Table is not a Lance table: {database_name}.{table_name}"
-                )
-        except Exception as e:
-            error_name = e.__class__.__name__ if hasattr(e, "__class__") else ""
-            if error_name == "EntityNotFoundException":
-                raise RuntimeError(
-                    f"Table does not exist: {database_name}.{table_name}"
-                )
-            if isinstance(e, RuntimeError):
-                raise
-            raise RuntimeError(f"Failed to check table existence: {e}")
-
     def _parse_table_identifier(self, identifier: List[str]) -> tuple[str, str]:
         """Parse table identifier into database and table name."""
         if not identifier or len(identifier) != 2:
@@ -578,64 +473,6 @@ class GlueNamespace(LanceNamespace):
             glue_table.get("Parameters", {}).get(TABLE_TYPE, "").upper()
             == LANCE_TABLE_TYPE
         )
-
-    def _convert_pyarrow_schema_to_glue_columns(
-        self, schema: pa.Schema
-    ) -> List[Dict[str, str]]:
-        """Convert PyArrow schema to Glue column definitions."""
-        columns = []
-        for field in schema:
-            column = {
-                "Name": field.name,
-                "Type": self._convert_pyarrow_type_to_glue_type(field.type),
-            }
-            columns.append(column)
-        return columns
-
-    def _convert_pyarrow_type_to_glue_type(self, arrow_type: pa.DataType) -> str:
-        """Convert PyArrow type to Glue/Hive type string."""
-        if pa.types.is_boolean(arrow_type):
-            return "boolean"
-        elif pa.types.is_int8(arrow_type) or pa.types.is_uint8(arrow_type):
-            return "tinyint"
-        elif pa.types.is_int16(arrow_type) or pa.types.is_uint16(arrow_type):
-            return "smallint"
-        elif pa.types.is_int32(arrow_type) or pa.types.is_uint32(arrow_type):
-            return "int"
-        elif pa.types.is_int64(arrow_type) or pa.types.is_uint64(arrow_type):
-            return "bigint"
-        elif pa.types.is_float32(arrow_type):
-            return "float"
-        elif pa.types.is_float64(arrow_type):
-            return "double"
-        elif pa.types.is_string(arrow_type):
-            return "string"
-        elif pa.types.is_binary(arrow_type):
-            return "binary"
-        elif pa.types.is_date32(arrow_type) or pa.types.is_date64(arrow_type):
-            return "date"
-        elif pa.types.is_timestamp(arrow_type):
-            return "timestamp"
-        elif pa.types.is_decimal(arrow_type):
-            return f"decimal({arrow_type.precision},{arrow_type.scale})"
-        elif pa.types.is_list(arrow_type):
-            element_type = self._convert_pyarrow_type_to_glue_type(
-                arrow_type.value_type
-            )
-            return f"array<{element_type}>"
-        elif pa.types.is_struct(arrow_type):
-            field_strs = []
-            for field in arrow_type:
-                field_type = self._convert_pyarrow_type_to_glue_type(field.type)
-                field_strs.append(f"{field.name}:{field_type}")
-            return f"struct<{','.join(field_strs)}>"
-        elif pa.types.is_map(arrow_type):
-            key_type = self._convert_pyarrow_type_to_glue_type(arrow_type.key_type)
-            value_type = self._convert_pyarrow_type_to_glue_type(arrow_type.item_type)
-            return f"map<{key_type},{value_type}>"
-        else:
-            # Default to string for unknown types
-            return "string"
 
     def __getstate__(self):
         """Prepare instance for pickling by excluding unpickleable objects."""
