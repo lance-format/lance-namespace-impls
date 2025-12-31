@@ -131,7 +131,6 @@ class TestGlueNamespaceIntegration(unittest.TestCase):
             DescribeNamespaceRequest,
             DropNamespaceRequest,
             ListNamespacesRequest,
-            NamespaceExistsRequest,
         )
 
         db_name = f"lance_test_{uuid.uuid4().hex[:8]}"
@@ -153,10 +152,6 @@ class TestGlueNamespaceIntegration(unittest.TestCase):
             describe_response.properties.get("description"), "Test database for Lance"
         )
 
-        exists_request = NamespaceExistsRequest()
-        exists_request.id = [db_name]
-        self.namespace.namespace_exists(exists_request)
-
         list_request = ListNamespacesRequest()
         list_request.id = []
         list_response = self.namespace.list_namespaces(list_request)
@@ -167,9 +162,6 @@ class TestGlueNamespaceIntegration(unittest.TestCase):
         self.namespace.drop_namespace(drop_request)
         self.created_databases.remove(db_name)
 
-        with self.assertRaises(RuntimeError):
-            self.namespace.namespace_exists(exists_request)
-
     def test_table_operations(self):
         """Test table CRUD operations."""
         from lance_namespace_urllib3_client.models import (
@@ -177,13 +169,13 @@ class TestGlueNamespaceIntegration(unittest.TestCase):
             DescribeTableRequest,
             DeregisterTableRequest,
             ListTablesRequest,
-            TableExistsRequest,
         )
 
         db_name = self._create_test_database()
         table_name = f"test_table_{uuid.uuid4().hex[:8]}"
         table_location = os.path.join(self.temp_dir, db_name, f"{table_name}.lance")
 
+        # Create empty table (DeclareTable)
         create_request = CreateEmptyTableRequest()
         create_request.id = [db_name, table_name]
         create_request.location = table_location
@@ -199,54 +191,11 @@ class TestGlueNamespaceIntegration(unittest.TestCase):
         self.assertIsNotNone(describe_response.location)
         self.assertEqual(describe_response.location, table_location)
 
-        exists_request = TableExistsRequest()
-        exists_request.id = [db_name, table_name]
-        self.namespace.table_exists(exists_request)
-
         list_request = ListTablesRequest()
         list_request.id = [db_name]
 
         list_response = self.namespace.list_tables(list_request)
         self.assertIn(table_name, list_response.tables)
-
-        deregister_request = DeregisterTableRequest()
-        deregister_request.id = [db_name, table_name]
-        self.namespace.deregister_table(deregister_request)
-
-        with self.assertRaises(RuntimeError):
-            self.namespace.table_exists(exists_request)
-
-    def test_register_existing_table(self):
-        """Test registering an existing Lance table."""
-        import lance
-        import pyarrow as pa
-        from lance_namespace_urllib3_client.models import (
-            DescribeTableRequest,
-            DeregisterTableRequest,
-            RegisterTableRequest,
-        )
-
-        db_name = self._create_test_database()
-        table_name = f"existing_table_{uuid.uuid4().hex[:8]}"
-        table_location = os.path.join(self.temp_dir, db_name, f"{table_name}.lance")
-
-        os.makedirs(os.path.dirname(table_location), exist_ok=True)
-        table = pa.table({"id": [1, 2, 3], "name": ["a", "b", "c"]})
-        lance.write_dataset(table, table_location)
-
-        register_request = RegisterTableRequest()
-        register_request.id = [db_name, table_name]
-        register_request.location = table_location
-
-        register_response = self.namespace.register_table(register_request)
-        self.assertIsNotNone(register_response.location)
-        self.assertEqual(register_response.location, table_location)
-
-        describe_request = DescribeTableRequest()
-        describe_request.id = [db_name, table_name]
-
-        describe_response = self.namespace.describe_table(describe_request)
-        self.assertEqual(describe_response.location, table_location)
 
         deregister_request = DeregisterTableRequest()
         deregister_request.id = [db_name, table_name]

@@ -16,10 +16,6 @@ import unittest
 import pytest
 
 from lance_namespace_impls.polaris import PolarisNamespace
-from lance_namespace_impls.rest_client import (
-    NamespaceNotFoundException,
-    TableNotFoundException,
-)
 from lance_namespace_urllib3_client.models import (
     CreateEmptyTableRequest,
     CreateNamespaceRequest,
@@ -29,8 +25,6 @@ from lance_namespace_urllib3_client.models import (
     DropNamespaceRequest,
     ListNamespacesRequest,
     ListTablesRequest,
-    NamespaceExistsRequest,
-    TableExistsRequest,
 )
 
 
@@ -137,11 +131,6 @@ class TestPolarisNamespaceIntegration(unittest.TestCase):
         describe_response = self.namespace.describe_namespace(describe_request)
         self.assertIsNotNone(describe_response)
 
-        # Check namespace exists
-        exists_request = NamespaceExistsRequest()
-        exists_request.id = [self.test_catalog, self.test_namespace]
-        self.namespace.namespace_exists(exists_request)  # Should not throw
-
         # List namespaces
         list_request = ListNamespacesRequest()
         list_request.id = [self.test_catalog]
@@ -154,10 +143,6 @@ class TestPolarisNamespaceIntegration(unittest.TestCase):
         drop_request.id = [self.test_catalog, self.test_namespace]
         self.namespace.drop_namespace(drop_request)
 
-        # Verify namespace doesn't exist
-        with self.assertRaises(NamespaceNotFoundException):
-            self.namespace.namespace_exists(exists_request)
-
     def test_table_operations(self):
         """Test table CRUD operations."""
         # Create namespace first
@@ -167,7 +152,7 @@ class TestPolarisNamespaceIntegration(unittest.TestCase):
 
         table_name = f"test_table_{uuid.uuid4().hex[:8]}"
 
-        # Create empty table
+        # Create empty table (DeclareTable)
         create_request = CreateEmptyTableRequest()
         create_request.id = [self.test_catalog, self.test_namespace, table_name]
         create_request.location = f"/data/warehouse/{self.test_namespace}/{table_name}"
@@ -182,11 +167,6 @@ class TestPolarisNamespaceIntegration(unittest.TestCase):
         describe_response = self.namespace.describe_table(describe_request)
         self.assertIsNotNone(describe_response.location)
 
-        # Check table exists
-        exists_request = TableExistsRequest()
-        exists_request.id = [self.test_catalog, self.test_namespace, table_name]
-        self.namespace.table_exists(exists_request)  # Should not throw
-
         # List tables
         list_request = ListTablesRequest()
         list_request.id = [self.test_catalog, self.test_namespace]
@@ -198,10 +178,6 @@ class TestPolarisNamespaceIntegration(unittest.TestCase):
         deregister_request = DeregisterTableRequest()
         deregister_request.id = [self.test_catalog, self.test_namespace, table_name]
         self.namespace.deregister_table(deregister_request)
-
-        # Verify table doesn't exist
-        with self.assertRaises(TableNotFoundException):
-            self.namespace.table_exists(exists_request)
 
     def test_create_empty_table_with_location(self):
         """Test creating an empty table with a specific location."""

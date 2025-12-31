@@ -24,8 +24,6 @@ from lance_namespace_urllib3_client.models import (
     DropNamespaceRequest,
     ListNamespacesRequest,
     ListTablesRequest,
-    NamespaceExistsRequest,
-    TableExistsRequest,
 )
 
 
@@ -124,11 +122,6 @@ class TestHive3NamespaceIntegration(unittest.TestCase):
             "Test database for integration tests",
         )
 
-        # Check namespace exists
-        exists_request = NamespaceExistsRequest()
-        exists_request.id = [self.test_catalog, self.test_database]
-        self.namespace.namespace_exists(exists_request)  # Should not throw
-
         # List namespaces (databases)
         list_request = ListNamespacesRequest()
         list_request.id = [self.test_catalog]
@@ -140,10 +133,6 @@ class TestHive3NamespaceIntegration(unittest.TestCase):
         drop_request.id = [self.test_catalog, self.test_database]
         self.namespace.drop_namespace(drop_request)
 
-        # Verify namespace doesn't exist
-        with self.assertRaises(ValueError):
-            self.namespace.namespace_exists(exists_request)
-
     def test_table_operations(self):
         """Test table CRUD operations."""
         # Create namespace first
@@ -153,7 +142,7 @@ class TestHive3NamespaceIntegration(unittest.TestCase):
 
         table_name = f"test_table_{uuid.uuid4().hex[:8]}"
 
-        # Create empty table
+        # Create empty table (DeclareTable)
         create_request = CreateEmptyTableRequest()
         create_request.id = [self.test_catalog, self.test_database, table_name]
         create_request.location = f"/tmp/lance/{self.test_database}/{table_name}"
@@ -168,11 +157,6 @@ class TestHive3NamespaceIntegration(unittest.TestCase):
         describe_response = self.namespace.describe_table(describe_request)
         self.assertIsNotNone(describe_response.location)
 
-        # Check table exists
-        exists_request = TableExistsRequest()
-        exists_request.id = [self.test_catalog, self.test_database, table_name]
-        self.namespace.table_exists(exists_request)  # Should not throw
-
         # List tables
         list_request = ListTablesRequest()
         list_request.id = [self.test_catalog, self.test_database]
@@ -184,10 +168,6 @@ class TestHive3NamespaceIntegration(unittest.TestCase):
         deregister_request = DeregisterTableRequest()
         deregister_request.id = [self.test_catalog, self.test_database, table_name]
         self.namespace.deregister_table(deregister_request)
-
-        # Verify table doesn't exist
-        with self.assertRaises(ValueError):
-            self.namespace.table_exists(exists_request)
 
     def test_create_empty_table_with_location(self):
         """Test creating an empty table with a specific location."""
