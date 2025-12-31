@@ -1,0 +1,72 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Java Glue Integration
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - java/lance-namespace-glue/**
+      - .github/workflows/java-integ-glue.yml
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - ready_for_review
+      - reopened
+    paths:
+      - java/lance-namespace-glue/**
+      - .github/workflows/java-integ-glue.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Only run if AWS credentials are available
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    steps:
+      - name: Check AWS credentials
+        id: check-creds
+        run: |
+          if [ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" ] && [ -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
+            echo "has_creds=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_creds=false" >> $GITHUB_OUTPUT
+            echo "AWS credentials not configured - skipping integration tests"
+          fi
+      - name: Checkout
+        if: steps.check-creds.outputs.has_creds == 'true'
+        uses: actions/checkout@v4
+      - name: Set up JDK 17
+        if: steps.check-creds.outputs.has_creds == 'true'
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+          cache: "maven"
+      - name: Build
+        if: steps.check-creds.outputs.has_creds == 'true'
+        run: make build-java
+      - name: Run integration tests
+        if: steps.check-creds.outputs.has_creds == 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+        run: make java-integ-test-glue

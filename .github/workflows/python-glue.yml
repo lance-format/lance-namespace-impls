@@ -19,6 +19,7 @@ on:
     paths:
       - python/src/lance_namespace_impls/glue.py
       - python/tests/test_glue.py
+      - python/tests/test_glue_integration.py
       - python/pyproject.toml
       - .github/workflows/python-glue.yml
   pull_request:
@@ -30,6 +31,7 @@ on:
     paths:
       - python/src/lance_namespace_impls/glue.py
       - python/tests/test_glue.py
+      - python/tests/test_glue_integration.py
       - python/pyproject.toml
       - .github/workflows/python-glue.yml
 

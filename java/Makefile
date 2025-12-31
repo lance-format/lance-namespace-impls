@@ -25,7 +25,7 @@ build-glue:
 
 .PHONY: test-glue
 test-glue:
-	./mvnw test -pl lance-namespace-glue
+	./mvnw test -pl lance-namespace-glue -Dtest="!*Integration"
 
 # ============================================================================
 # Hive2
@@ -160,3 +160,7 @@ integ-test-iceberg:
 .PHONY: integ-test-unity
 integ-test-unity:
 	./mvnw test -pl lance-namespace-unity -Dtest="*Integration" -DfailIfNoTests=false
+
+.PHONY: integ-test-glue
+integ-test-glue:
+	./mvnw test -pl lance-namespace-glue -Dtest="*Integration" -DfailIfNoTests=false

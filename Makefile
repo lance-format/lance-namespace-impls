@@ -152,6 +152,10 @@ java-integ-test-iceberg:
 java-integ-test-unity:
 	cd java && make integ-test-unity
 
+.PHONY: java-integ-test-glue
+java-integ-test-glue:
+	cd java && make integ-test-glue
+
 # ============================================================================
 # Python Integration test targets
 # ============================================================================
@@ -183,3 +187,7 @@ python-integ-test-unity:
 .PHONY: python-integ-test-iceberg
 python-integ-test-iceberg:
 	cd python && make integ-test-iceberg
+
+.PHONY: python-integ-test-glue
+python-integ-test-glue:
+	cd python && make integ-test-glue

@@ -16,8 +16,8 @@
 
 .PHONY: lint-glue
 lint-glue:
-	uv run ruff check src/lance_namespace_impls/glue.py tests/test_glue.py
-	uv run ruff format --check src/lance_namespace_impls/glue.py tests/test_glue.py
+	uv run ruff check src/lance_namespace_impls/glue.py tests/test_glue.py tests/test_glue_integration.py
+	uv run ruff format --check src/lance_namespace_impls/glue.py tests/test_glue.py tests/test_glue_integration.py
 
 .PHONY: install-glue
 install-glue:
@@ -160,3 +160,7 @@ integ-test-unity:
 .PHONY: integ-test-iceberg
 integ-test-iceberg:
 	uv run pytest tests/test_iceberg_integration.py -v
+
+.PHONY: integ-test-glue
+integ-test-glue:
+	uv run pytest tests/test_glue_integration.py -v
