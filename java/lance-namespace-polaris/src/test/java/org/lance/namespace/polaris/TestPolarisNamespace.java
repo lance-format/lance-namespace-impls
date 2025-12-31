@@ -13,19 +13,19 @@
  */
 package org.lance.namespace.polaris;
 
-import org.lance.namespace.LanceNamespaceException;
+import org.lance.namespace.errors.LanceNamespaceException;
 import org.lance.namespace.model.CreateEmptyTableRequest;
 import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeregisterTableRequest;
+import org.lance.namespace.model.DeregisterTableResponse;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
 import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 import org.lance.namespace.model.DropNamespaceRequest;
 import org.lance.namespace.model.DropNamespaceResponse;
-import org.lance.namespace.model.DropTableRequest;
-import org.lance.namespace.model.DropTableResponse;
 import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
@@ -47,6 +47,7 @@ import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -116,7 +117,7 @@ public class TestPolarisNamespace {
     mockResponse.setProperties(Collections.singletonMap("key", "value"));
 
     when(restClient.post(
-            eq("/namespaces"),
+            eq("/v1/test_catalog/namespaces"),
             any(PolarisModels.CreateNamespaceRequest.class),
             eq(PolarisModels.NamespaceResponse.class)))
         .thenReturn(mockResponse);
@@ -138,7 +139,7 @@ public class TestPolarisNamespace {
     mockResponse.setProperties(Collections.singletonMap("description", "test schema"));
 
     when(restClient.get(
-            eq("/namespaces/test_catalog.schema1"), eq(PolarisModels.NamespaceResponse.class)))
+            eq("/v1/test_catalog/namespaces/schema1"), eq(PolarisModels.NamespaceResponse.class)))
         .thenReturn(mockResponse);
 
     DescribeNamespaceRequest request = new DescribeNamespaceRequest();
@@ -153,18 +154,16 @@ public class TestPolarisNamespace {
   @Test
   public void testListNamespaces() throws IOException {
     PolarisModels.ListNamespacesResponse mockResponse = new PolarisModels.ListNamespacesResponse();
-    PolarisModels.ListNamespacesResponse.Namespace ns1 =
-        new PolarisModels.ListNamespacesResponse.Namespace();
-    ns1.setNamespace(Arrays.asList("test_catalog", "schema1"));
-    PolarisModels.ListNamespacesResponse.Namespace ns2 =
-        new PolarisModels.ListNamespacesResponse.Namespace();
-    ns2.setNamespace(Arrays.asList("test_catalog", "schema2"));
-    mockResponse.setNamespaces(Arrays.asList(ns1, ns2));
+    List<List<String>> namespaces =
+        Arrays.asList(Arrays.asList("schema1"), Arrays.asList("schema2"));
+    mockResponse.setNamespaces(namespaces);
 
-    when(restClient.get(eq("/namespaces"), eq(PolarisModels.ListNamespacesResponse.class)))
+    when(restClient.get(
+            eq("/v1/test_catalog/namespaces"), eq(PolarisModels.ListNamespacesResponse.class)))
         .thenReturn(mockResponse);
 
     ListNamespacesRequest request = new ListNamespacesRequest();
+    request.setId(Collections.singletonList("test_catalog"));
 
     ListNamespacesResponse response = namespace.listNamespaces(request);
 
@@ -179,14 +178,14 @@ public class TestPolarisNamespace {
 
     DropNamespaceResponse response = namespace.dropNamespace(request);
 
-    verify(restClient).delete("/namespaces/test_catalog.schema1");
+    verify(restClient).delete("/v1/test_catalog/namespaces/schema1");
     // Response doesn't have getId() method, just verify the delete was called
   }
 
   @Test
   public void testNamespaceExists() throws IOException {
     when(restClient.get(
-            eq("/namespaces/test_catalog.schema1"), eq(PolarisModels.NamespaceResponse.class)))
+            eq("/v1/test_catalog/namespaces/schema1"), eq(PolarisModels.NamespaceResponse.class)))
         .thenReturn(new PolarisModels.NamespaceResponse());
 
     NamespaceExistsRequest request = new NamespaceExistsRequest();
@@ -199,8 +198,8 @@ public class TestPolarisNamespace {
   @Test
   public void testNamespaceNotExists() throws IOException {
     when(restClient.get(
-            eq("/namespaces/test_catalog.schema1"), eq(PolarisModels.NamespaceResponse.class)))
-        .thenThrow(new IOException("404 Not Found"));
+            eq("/v1/test_catalog/namespaces/schema1"), eq(PolarisModels.NamespaceResponse.class)))
+        .thenThrow(new org.lance.namespace.rest.RestClientException(404, "Not Found"));
 
     NamespaceExistsRequest request = new NamespaceExistsRequest();
     request.setId(Arrays.asList("test_catalog", "schema1"));
@@ -226,7 +225,7 @@ public class TestPolarisNamespace {
     mockResponse.setTable(mockTable);
 
     when(restClient.post(
-            eq("/namespaces/test_catalog.schema1/generic-tables"),
+            eq("/polaris/v1/test_catalog/namespaces/schema1/generic-tables"),
             any(PolarisModels.CreateGenericTableRequest.class),
             eq(PolarisModels.LoadGenericTableResponse.class)))
         .thenReturn(mockResponse);
@@ -234,13 +233,10 @@ public class TestPolarisNamespace {
     CreateEmptyTableRequest request = new CreateEmptyTableRequest();
     request.setId(Arrays.asList("test_catalog", "schema1", "test_table"));
     request.setLocation("s3://bucket/path/to/table");
-    request.setProperties(Collections.singletonMap("comment", "Test table"));
 
     CreateEmptyTableResponse response = namespace.createEmptyTable(request);
 
     assertThat(response.getLocation()).isEqualTo("s3://bucket/path/to/table");
-    assertThat(response.getProperties()).containsEntry("managed_by", "storage");
-    assertThat(response.getProperties()).containsEntry("comment", "Test table");
   }
 
   @Test
@@ -259,7 +255,7 @@ public class TestPolarisNamespace {
     mockResponse.setTable(mockTable);
 
     when(restClient.get(
-            eq("/namespaces/test_catalog.schema1/generic-tables/test_table"),
+            eq("/polaris/v1/test_catalog/namespaces/schema1/generic-tables/test_table"),
             eq(PolarisModels.LoadGenericTableResponse.class)))
         .thenReturn(mockResponse);
 
@@ -269,8 +265,6 @@ public class TestPolarisNamespace {
     DescribeTableResponse response = namespace.describeTable(request);
 
     assertThat(response.getLocation()).isEqualTo("s3://bucket/path/to/table");
-    assertThat(response.getProperties()).containsEntry("comment", "Test table");
-    assertThat(response.getProperties()).containsEntry("managed_by", "storage");
   }
 
   @Test
@@ -285,7 +279,7 @@ public class TestPolarisNamespace {
     mockResponse.setTable(mockTable);
 
     when(restClient.get(
-            eq("/namespaces/test_catalog.schema1/generic-tables/test_table"),
+            eq("/polaris/v1/test_catalog/namespaces/schema1/generic-tables/test_table"),
             eq(PolarisModels.LoadGenericTableResponse.class)))
         .thenReturn(mockResponse);
 
@@ -300,11 +294,11 @@ public class TestPolarisNamespace {
   @Test
   public void testListTables() throws IOException {
     PolarisModels.TableIdentifier id1 = new PolarisModels.TableIdentifier();
-    id1.setNamespace("test_catalog.schema1");
+    id1.setNamespace(Collections.singletonList("schema1"));
     id1.setName("table1");
 
     PolarisModels.TableIdentifier id2 = new PolarisModels.TableIdentifier();
-    id2.setNamespace("test_catalog.schema1");
+    id2.setNamespace(Collections.singletonList("schema1"));
     id2.setName("table2");
 
     PolarisModels.ListGenericTablesResponse mockResponse =
@@ -312,7 +306,7 @@ public class TestPolarisNamespace {
     mockResponse.setIdentifiers(Arrays.asList(id1, id2));
 
     when(restClient.get(
-            eq("/namespaces/test_catalog.schema1/generic-tables"),
+            eq("/polaris/v1/test_catalog/namespaces/schema1/generic-tables"),
             eq(PolarisModels.ListGenericTablesResponse.class)))
         .thenReturn(mockResponse);
 
@@ -326,13 +320,28 @@ public class TestPolarisNamespace {
   }
 
   @Test
-  public void testDropTable() throws IOException {
-    DropTableRequest request = new DropTableRequest();
+  public void testDeregisterTable() throws IOException {
+    PolarisModels.GenericTable mockTable = new PolarisModels.GenericTable();
+    mockTable.setName("test_table");
+    mockTable.setFormat("lance");
+    mockTable.setBaseLocation("s3://bucket/path/to/table");
+
+    PolarisModels.LoadGenericTableResponse mockResponse =
+        new PolarisModels.LoadGenericTableResponse();
+    mockResponse.setTable(mockTable);
+
+    when(restClient.get(
+            eq("/polaris/v1/test_catalog/namespaces/schema1/generic-tables/test_table"),
+            eq(PolarisModels.LoadGenericTableResponse.class)))
+        .thenReturn(mockResponse);
+
+    DeregisterTableRequest request = new DeregisterTableRequest();
     request.setId(Arrays.asList("test_catalog", "schema1", "test_table"));
 
-    DropTableResponse response = namespace.dropTable(request);
+    DeregisterTableResponse response = namespace.deregisterTable(request);
 
-    verify(restClient).delete("/namespaces/test_catalog.schema1/generic-tables/test_table");
-    // Response doesn't have getId() method, just verify the delete was called
+    assertThat(response.getLocation()).isEqualTo("s3://bucket/path/to/table");
+    verify(restClient)
+        .delete("/polaris/v1/test_catalog/namespaces/schema1/generic-tables/test_table");
   }
 }

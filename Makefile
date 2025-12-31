@@ -10,37 +10,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# ============================================================================
+# Python
+# ============================================================================
+
 .PHONY: clean-python
 clean-python:
-	cd python; make clean
+	cd python && make clean
 
 .PHONY: build-python
 build-python:
-	cd python; make build
+	cd python && make build
 
 .PHONY: test-python
 test-python:
-	cd python; make test
+	cd python && make test
+
+# ============================================================================
+# Java
+# ============================================================================
 
 .PHONY: clean-java
 clean-java:
-	cd java; make clean
+	cd java && make clean
 
 .PHONY: build-java
 build-java:
-	cd java; make build
+	cd java && make build
 
 .PHONY: test-java
 test-java:
-	cd java; make test
+	cd java && make test
+
+# ============================================================================
+# Docs
+# ============================================================================
 
 .PHONY: build-docs
 build-docs:
-	cd docs; make build
+	cd docs && make build
 
 .PHONY: serve-docs
 serve-docs:
-	cd docs; make serve
+	cd docs && make serve
+
+# ============================================================================
+# All
+# ============================================================================
 
 .PHONY: clean
 clean: clean-python clean-java
@@ -84,7 +100,7 @@ docker-logs:
 	cd docker && make logs
 
 # Individual catalog docker targets
-.PHONY: docker-up-hive2 docker-up-hive3 docker-up-polaris docker-up-unity
+.PHONY: docker-up-hive2 docker-up-hive3 docker-up-polaris docker-up-unity docker-up-iceberg
 docker-up-hive2:
 	cd docker && make up-hive2
 docker-up-hive3:
@@ -93,8 +109,10 @@ docker-up-polaris:
 	cd docker && make up-polaris
 docker-up-unity:
 	cd docker && make up-unity
+docker-up-iceberg:
+	cd docker && make up-iceberg
 
-.PHONY: docker-down-hive2 docker-down-hive3 docker-down-polaris docker-down-unity
+.PHONY: docker-down-hive2 docker-down-hive3 docker-down-polaris docker-down-unity docker-down-iceberg
 docker-down-hive2:
 	cd docker && make down-hive2
 docker-down-hive3:
@@ -103,30 +121,73 @@ docker-down-polaris:
 	cd docker && make down-polaris
 docker-down-unity:
 	cd docker && make down-unity
+docker-down-iceberg:
+	cd docker && make down-iceberg
 
 # ============================================================================
-# Integration test targets
+# Java Integration test targets
 # ============================================================================
 
-.PHONY: integration-test-java
-integration-test-java:
-	cd java && ./mvnw test -Dtest="*IntegrationTest" -DfailIfNoTests=false
+.PHONY: java-integ-test
+java-integ-test:
+	cd java && make integ-test
 
-.PHONY: integration-test-hive2
-integration-test-hive2:
-	cd java && ./mvnw test -pl lance-namespace-hive2 -Dtest="*IntegrationTest" -DfailIfNoTests=false
+.PHONY: java-integ-test-hive2
+java-integ-test-hive2:
+	cd java && make integ-test-hive2
 
-.PHONY: integration-test-hive3
-integration-test-hive3:
-	cd java && ./mvnw test -pl lance-namespace-hive3 -Dtest="*IntegrationTest" -DfailIfNoTests=false
+.PHONY: java-integ-test-hive3
+java-integ-test-hive3:
+	cd java && make integ-test-hive3
 
-.PHONY: integration-test-polaris
-integration-test-polaris:
-	cd java && ./mvnw test -pl lance-namespace-polaris -Dtest="*IntegrationTest" -DfailIfNoTests=false
+.PHONY: java-integ-test-polaris
+java-integ-test-polaris:
+	cd java && make integ-test-polaris
 
-.PHONY: integration-test-unity
-integration-test-unity:
-	cd java && ./mvnw test -pl lance-namespace-unity -Dtest="*IntegrationTest" -DfailIfNoTests=false
+.PHONY: java-integ-test-iceberg
+java-integ-test-iceberg:
+	cd java && make integ-test-iceberg
 
-.PHONY: integration-test
-integration-test: integration-test-java
+.PHONY: java-integ-test-unity
+java-integ-test-unity:
+	cd java && make integ-test-unity
+
+.PHONY: java-integ-test-glue
+java-integ-test-glue:
+	cd java && make integ-test-glue
+
+# ============================================================================
+# Python Integration test targets
+# ============================================================================
+
+.PHONY: python-integ-test
+python-integ-test:
+	cd python && make integ-test
+
+.PHONY: python-integ-test-hive
+python-integ-test-hive:
+	cd python && make integ-test-hive
+
+.PHONY: python-integ-test-hive2
+python-integ-test-hive2:
+	cd python && make integ-test-hive2
+
+.PHONY: python-integ-test-hive3
+python-integ-test-hive3:
+	cd python && make integ-test-hive3
+
+.PHONY: python-integ-test-polaris
+python-integ-test-polaris:
+	cd python && make integ-test-polaris
+
+.PHONY: python-integ-test-unity
+python-integ-test-unity:
+	cd python && make integ-test-unity
+
+.PHONY: python-integ-test-iceberg
+python-integ-test-iceberg:
+	cd python && make integ-test-iceberg
+
+.PHONY: python-integ-test-glue
+python-integ-test-glue:
+	cd python && make integ-test-glue

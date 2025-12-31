@@ -10,12 +10,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Java Unity Catalog Tests
+name: Java Unity
 
 on:
   push:
     branches:
       - main
+    paths:
+      - java/lance-namespace-unity/**
+      - java/pom.xml
+      - .github/workflows/java-unity.yml
   pull_request:
     types:
       - opened
@@ -24,6 +28,7 @@ on:
       - reopened
     paths:
       - java/lance-namespace-unity/**
+      - java/pom.xml
       - .github/workflows/java-unity.yml
 
 concurrency:
@@ -31,12 +36,12 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  unity-catalog-tests:
+  test:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       matrix:
-        java-version: [ 17 ]
+        java-version: [11, 17]
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -46,41 +51,12 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.java-version }}
           cache: "maven"
-
-      # Start Unity Catalog server using Docker Compose
-      - name: Start Unity Catalog server
-        run: |
-          git clone https://github.com/unitycatalog/unitycatalog.git /tmp/unitycatalog
-          cd /tmp/unitycatalog
-          docker compose up -d
-          # Wait for Unity Catalog to be ready
-          echo "Waiting for Unity Catalog server to start..."
-          for i in {1..30}; do
-            if curl -s http://localhost:8080/api/2.1/unity-catalog/catalogs > /dev/null; then
-              echo "Unity Catalog server is ready"
-              break
-            fi
-            echo "Waiting for Unity Catalog server... ($i/30)"
-            sleep 2
-          done
-          # Verify server is responding
-          curl -s http://localhost:8080/api/2.1/unity-catalog/catalogs || exit 1
-
-      # Run Unity namespace tests
-      - name: Run Unity Catalog tests with Java ${{ matrix.java-version }}
+      - name: Lint
         working-directory: java
-        run: ./mvnw test -pl lance-namespace-unity -am
-
-      # Clean up Docker containers
-      - name: Stop Unity Catalog server
-        if: always()
-        run: |
-          cd /tmp/unitycatalog
-          docker compose down
-
-      # Show Docker logs if tests failed
-      - name: Show Unity Catalog logs on failure
-        if: failure()
-        run: |
-          cd /tmp/unitycatalog
-          docker compose logs
+        run: make lint-unity
+      - name: Build
+        working-directory: java
+        run: make build-unity
+      - name: Test
+        working-directory: java
+        run: make test-unity

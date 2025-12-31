@@ -180,21 +180,21 @@ public class PolarisModels {
   /** Table identifier. */
   @JsonIgnoreProperties(ignoreUnknown = true)
   public static class TableIdentifier {
-    private String namespace;
+    private List<String> namespace;
     private String name;
 
     public TableIdentifier() {}
 
-    public TableIdentifier(String namespace, String name) {
+    public TableIdentifier(List<String> namespace, String name) {
       this.namespace = namespace;
       this.name = name;
     }
 
-    public String getNamespace() {
+    public List<String> getNamespace() {
       return namespace;
     }
 
-    public void setNamespace(String namespace) {
+    public void setNamespace(List<String> namespace) {
       this.namespace = namespace;
     }
 
@@ -339,11 +339,11 @@ public class PolarisModels {
     @JsonProperty("next-page-token")
     private String nextPageToken;
 
-    private List<Namespace> namespaces;
+    private List<List<String>> namespaces;
 
     public ListNamespacesResponse() {}
 
-    public ListNamespacesResponse(String nextPageToken, List<Namespace> namespaces) {
+    public ListNamespacesResponse(String nextPageToken, List<List<String>> namespaces) {
       this.nextPageToken = nextPageToken;
       this.namespaces = namespaces;
     }
@@ -356,31 +356,12 @@ public class PolarisModels {
       this.nextPageToken = nextPageToken;
     }
 
-    public List<Namespace> getNamespaces() {
+    public List<List<String>> getNamespaces() {
       return namespaces;
     }
 
-    public void setNamespaces(List<Namespace> namespaces) {
+    public void setNamespaces(List<List<String>> namespaces) {
       this.namespaces = namespaces;
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class Namespace {
-      private List<String> namespace;
-
-      public Namespace() {}
-
-      public Namespace(List<String> namespace) {
-        this.namespace = namespace;
-      }
-
-      public List<String> getNamespace() {
-        return namespace;
-      }
-
-      public void setNamespace(List<String> namespace) {
-        this.namespace = namespace;
-      }
     }
   }
 

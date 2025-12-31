@@ -1,193 +1,95 @@
 """
 Iceberg REST Catalog namespace implementation for Lance.
+
+The prefix (typically a warehouse or catalog name) is treated as part of the
+namespace identifier, similar to how Polaris handles catalog names.
+For example: [warehouse_name, namespace1, namespace2, ..., table_name]
 """
 
-import json
 import logging
-import os
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, field
-import urllib3
 import urllib.parse
-
-from lance_namespace_urllib3_client.models import (
-    ListNamespacesRequest,
-    ListNamespacesResponse,
-    DescribeNamespaceRequest,
-    DescribeNamespaceResponse,
-    CreateNamespaceRequest,
-    CreateNamespaceResponse,
-    DropNamespaceRequest,
-    DropNamespaceResponse,
-    NamespaceExistsRequest,
-    ListTablesRequest,
-    ListTablesResponse,
-    DescribeTableRequest,
-    DescribeTableResponse,
-    TableExistsRequest,
-    DropTableRequest,
-    DropTableResponse,
-    CreateEmptyTableRequest,
-    CreateEmptyTableResponse,
-)
+import warnings
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 from lance.namespace import LanceNamespace
+from lance_namespace_urllib3_client.models import (
+    CreateEmptyTableRequest,
+    CreateEmptyTableResponse,
+    CreateNamespaceRequest,
+    CreateNamespaceResponse,
+    DeclareTableRequest,
+    DeclareTableResponse,
+    DeregisterTableRequest,
+    DeregisterTableResponse,
+    DescribeNamespaceRequest,
+    DescribeNamespaceResponse,
+    DescribeTableRequest,
+    DescribeTableResponse,
+    DropNamespaceRequest,
+    DropNamespaceResponse,
+    ListNamespacesRequest,
+    ListNamespacesResponse,
+    ListTablesRequest,
+    ListTablesResponse,
+)
 
+from lance_namespace_impls.rest_client import (
+    RestClient,
+    RestClientException,
+    InternalException,
+    InvalidInputException,
+    NamespaceAlreadyExistsException,
+    NamespaceNotFoundException,
+    TableAlreadyExistsException,
+    TableNotFoundException,
+)
 
 logger = logging.getLogger(__name__)
 
-NAMESPACE_SEPARATOR = '\x1F'
+NAMESPACE_SEPARATOR = "\x1f"
 
 
 @dataclass
 class IcebergNamespaceConfig:
     """Configuration for Iceberg REST Catalog namespace."""
 
-    ENDPOINT = "iceberg.endpoint"
-    WAREHOUSE = "iceberg.warehouse"
-    PREFIX = "iceberg.prefix"
-    AUTH_TOKEN = "iceberg.auth_token"
-    CREDENTIAL = "iceberg.credential"
-    CONNECT_TIMEOUT = "iceberg.connect_timeout_millis"
-    READ_TIMEOUT = "iceberg.read_timeout_millis"
-    MAX_RETRIES = "iceberg.max_retries"
-    ROOT = "iceberg.root"
+    ENDPOINT = "endpoint"
+    WAREHOUSE = "warehouse"
+    AUTH_TOKEN = "auth_token"
+    CREDENTIAL = "credential"
+    CONNECT_TIMEOUT = "connect_timeout"
+    READ_TIMEOUT = "read_timeout"
+    MAX_RETRIES = "max_retries"
+    ROOT = "root"
 
     endpoint: str
     warehouse: Optional[str] = None
-    prefix: str = ""
     auth_token: Optional[str] = None
     credential: Optional[str] = None
     connect_timeout: int = 10000
     read_timeout: int = 30000
     max_retries: int = 3
-    root: str = "/tmp/lance"
+    root: str = ""
 
     def __init__(self, properties: Dict[str, str]):
+        import os
+
         self.endpoint = properties.get(self.ENDPOINT)
         if not self.endpoint:
             raise ValueError(f"Required property {self.ENDPOINT} is not set")
 
         self.warehouse = properties.get(self.WAREHOUSE)
-        self.prefix = properties.get(self.PREFIX, "")
         self.auth_token = properties.get(self.AUTH_TOKEN)
         self.credential = properties.get(self.CREDENTIAL)
         self.connect_timeout = int(properties.get(self.CONNECT_TIMEOUT, "10000"))
         self.read_timeout = int(properties.get(self.READ_TIMEOUT, "30000"))
         self.max_retries = int(properties.get(self.MAX_RETRIES, "3"))
-        self.root = properties.get(self.ROOT, "/tmp/lance")
+        self.root = properties.get(self.ROOT, os.getcwd())
 
-    def get_full_api_url(self) -> str:
-        """Get the full API URL with prefix."""
-        base = self.endpoint.rstrip('/')
-        if self.prefix:
-            return f"{base}/{self.prefix}"
-        return base
-
-
-class RestClient:
-    """Simple REST client for Iceberg REST Catalog API."""
-
-    def __init__(self, base_url: str, headers: Optional[Dict[str, str]] = None,
-                 connect_timeout: int = 10, read_timeout: int = 30, max_retries: int = 3):
-        self.base_url = base_url.rstrip('/')
-        self.headers = headers or {}
-        self.headers['Content-Type'] = 'application/json'
-        self.headers['Accept'] = 'application/json'
-
-        timeout = urllib3.Timeout(connect=connect_timeout/1000, read=read_timeout/1000)
-        self.http = urllib3.PoolManager(
-            timeout=timeout,
-            retries=urllib3.Retry(total=max_retries, backoff_factor=0.3)
-        )
-
-    def _make_request(self, method: str, path: str, params: Optional[Dict[str, str]] = None,
-                      body: Optional[Any] = None) -> Any:
-        """Make HTTP request to Iceberg API."""
-        url = f"{self.base_url}{path}"
-
-        if params:
-            query_string = urllib.parse.urlencode(params)
-            url = f"{url}?{query_string}"
-
-        body_data = None
-        if body is not None:
-            body_data = json.dumps(body).encode('utf-8')
-
-        try:
-            response = self.http.request(
-                method,
-                url,
-                headers=self.headers,
-                body=body_data
-            )
-
-            if response.status >= 400:
-                raise RestClientException(response.status, response.data.decode('utf-8'))
-
-            if response.data:
-                return json.loads(response.data.decode('utf-8'))
-            return None
-
-        except urllib3.exceptions.HTTPError as e:
-            raise RestClientException(500, str(e))
-
-    def get(self, path: str, params: Optional[Dict[str, str]] = None) -> Any:
-        """Make GET request."""
-        return self._make_request('GET', path, params=params)
-
-    def post(self, path: str, body: Any) -> Any:
-        """Make POST request."""
-        return self._make_request('POST', path, body=body)
-
-    def delete(self, path: str, params: Optional[Dict[str, str]] = None) -> None:
-        """Make DELETE request."""
-        self._make_request('DELETE', path, params=params)
-
-    def close(self):
-        """Close the HTTP connection pool."""
-        self.http.clear()
-
-
-class RestClientException(Exception):
-    """Exception raised by REST client."""
-
-    def __init__(self, status_code: int, response_body: str):
-        self.status_code = status_code
-        self.response_body = response_body
-        super().__init__(f"HTTP {status_code}: {response_body}")
-
-
-class LanceNamespaceException(Exception):
-    """Exception for Lance namespace operations."""
-
-    def __init__(self, status_code: int, message: str):
-        self.status_code = status_code
-        super().__init__(message)
-
-    @classmethod
-    def not_found(cls, message: str, error_code: str, resource: str, details: str = ""):
-        """Create a not found exception."""
-        full_message = f"{message} [{error_code}]: {resource}"
-        if details:
-            full_message += f" - {details}"
-        return cls(404, full_message)
-
-    @classmethod
-    def bad_request(cls, message: str, error_code: str, resource: str, details: str = ""):
-        """Create a bad request exception."""
-        full_message = f"{message} [{error_code}]: {resource}"
-        if details:
-            full_message += f" - {details}"
-        return cls(400, full_message)
-
-    @classmethod
-    def conflict(cls, message: str, error_code: str, resource: str, details: str = ""):
-        """Create a conflict exception."""
-        full_message = f"{message} [{error_code}]: {resource}"
-        if details:
-            full_message += f" - {details}"
-        return cls(409, full_message)
+    def get_base_api_url(self) -> str:
+        """Get the base API URL without prefix."""
+        return self.endpoint.rstrip("/")
 
 
 def create_dummy_schema() -> Dict[str, Any]:
@@ -195,19 +97,20 @@ def create_dummy_schema() -> Dict[str, Any]:
     return {
         "type": "struct",
         "schema-id": 0,
-        "fields": [
-            {
-                "id": 1,
-                "name": "dummy",
-                "required": False,
-                "type": "string"
-            }
-        ]
+        "fields": [{"id": 1, "name": "dummy", "required": False, "type": "string"}],
     }
 
 
 class IcebergNamespace(LanceNamespace):
-    """Iceberg REST Catalog namespace implementation for Lance."""
+    """
+    Iceberg REST Catalog namespace implementation for Lance.
+
+    The prefix (warehouse) is included in the namespace identifier:
+    - Namespace ID format: [prefix, namespace1, namespace2, ...]
+    - Table ID format: [prefix, namespace1, namespace2, ..., table_name]
+
+    This is consistent with how Polaris handles catalog names.
+    """
 
     TABLE_TYPE_LANCE = "lance"
     TABLE_TYPE_KEY = "table_type"
@@ -215,22 +118,25 @@ class IcebergNamespace(LanceNamespace):
     def __init__(self, **properties):
         """Initialize Iceberg namespace with configuration properties."""
         self.config = IcebergNamespaceConfig(properties)
+        self._prefix_cache: Dict[str, str] = {}
 
         headers = {}
         if self.config.auth_token:
-            headers['Authorization'] = f"Bearer {self.config.auth_token}"
+            headers["Authorization"] = f"Bearer {self.config.auth_token}"
         if self.config.warehouse:
-            headers['X-Iceberg-Access-Delegation'] = 'vended-credentials'
+            headers["X-Iceberg-Access-Delegation"] = "vended-credentials"
 
         self.rest_client = RestClient(
-            base_url=self.config.get_full_api_url(),
+            base_url=self.config.get_base_api_url(),
             headers=headers,
             connect_timeout=self.config.connect_timeout,
             read_timeout=self.config.read_timeout,
-            max_retries=self.config.max_retries
+            max_retries=self.config.max_retries,
         )
 
-        logger.info(f"Initialized Iceberg namespace with endpoint: {self.config.endpoint}")
+        logger.info(
+            f"Initialized Iceberg namespace with endpoint: {self.config.endpoint}"
+        )
 
     def namespace_id(self) -> str:
         """Return a human-readable unique identifier for this namespace instance."""
@@ -238,330 +144,452 @@ class IcebergNamespace(LanceNamespace):
 
     def _encode_namespace(self, namespace: List[str]) -> str:
         """Encode namespace for URL path."""
-        encoded_parts = [urllib.parse.quote(s, safe='') for s in namespace]
+        encoded_parts = [urllib.parse.quote(s, safe="") for s in namespace]
         joined = NAMESPACE_SEPARATOR.join(encoded_parts)
-        return urllib.parse.quote(joined, safe='')
+        return urllib.parse.quote(joined, safe="")
 
-    def list_namespaces(self, request: ListNamespacesRequest) -> ListNamespacesResponse:
-        """List namespaces."""
-        ns_id = self._parse_identifier(request.id)
+    def _resolve_prefix(self, warehouse: str) -> str:
+        """Resolve warehouse name to actual API prefix.
+
+        Some Iceberg REST catalogs (like Lakekeeper) use a different prefix
+        (e.g., warehouse UUID) than the warehouse name. This method calls
+        the config endpoint to get the actual prefix.
+        """
+        if warehouse in self._prefix_cache:
+            return self._prefix_cache[warehouse]
 
         try:
-            params = {}
-            if ns_id:
-                parent = self._encode_namespace(ns_id)
-                params['parent'] = parent
-            if request.page_token:
-                params['pageToken'] = request.page_token
+            response = self.rest_client.get(
+                "/v1/config", params={"warehouse": warehouse}
+            )
+            if response and "defaults" in response:
+                prefix = response["defaults"].get("prefix")
+                if prefix:
+                    self._prefix_cache[warehouse] = prefix
+                    logger.debug(
+                        f"Resolved warehouse '{warehouse}' to prefix '{prefix}'"
+                    )
+                    return prefix
+        except Exception as e:
+            logger.debug(f"Failed to resolve prefix for warehouse '{warehouse}': {e}")
 
-            response = self.rest_client.get('/namespaces', params=params if params else None)
+        self._prefix_cache[warehouse] = warehouse
+        return warehouse
+
+    def _get_prefix_path(self, warehouse: str) -> str:
+        """Get the API path with prefix."""
+        prefix = self._resolve_prefix(warehouse)
+        return f"/v1/{prefix}"
+
+    def list_namespaces(self, request: ListNamespacesRequest) -> ListNamespacesResponse:
+        """List namespaces.
+
+        The first element of request.id is treated as the prefix (warehouse).
+        Remaining elements specify the parent namespace to list children of.
+        """
+        ns_id = self._parse_identifier(request.id)
+
+        if not ns_id:
+            raise InvalidInputException("Must specify at least the prefix (warehouse)")
+
+        try:
+            prefix = ns_id[0]
+            parent_ns = ns_id[1:] if len(ns_id) > 1 else []
+            prefix_path = self._get_prefix_path(prefix)
+
+            params = {}
+            if parent_ns:
+                parent = self._encode_namespace(parent_ns)
+                params["parent"] = parent
+            if request.page_token:
+                params["pageToken"] = request.page_token
+
+            response = self.rest_client.get(
+                f"{prefix_path}/namespaces", params=params if params else None
+            )
 
             namespaces = []
-            if response and 'namespaces' in response:
-                for ns in response['namespaces']:
+            if response and "namespaces" in response:
+                for ns in response["namespaces"]:
                     if ns:
-                        namespaces.append(ns[-1])
+                        full_ns = [prefix] + list(ns)
+                        namespaces.append(".".join(full_ns))
 
             namespaces = sorted(set(namespaces))
 
-            result = ListNamespacesResponse()
-            result.namespaces = namespaces
-            return result
+            return ListNamespacesResponse(namespaces=namespaces)
 
+        except RestClientException as e:
+            raise InternalException(f"Failed to list namespaces: {e}")
+        except InvalidInputException:
+            raise
         except Exception as e:
-            if isinstance(e, LanceNamespaceException):
-                raise
-            raise LanceNamespaceException(500, f"Failed to list namespaces: {e}")
+            raise InternalException(f"Failed to list namespaces: {e}")
 
-    def create_namespace(self, request: CreateNamespaceRequest) -> CreateNamespaceResponse:
-        """Create a new namespace."""
+    def create_namespace(
+        self, request: CreateNamespaceRequest
+    ) -> CreateNamespaceResponse:
+        """Create a new namespace.
+
+        The first element of request.id is treated as the prefix (warehouse).
+        Remaining elements are the namespace to create.
+        """
         ns_id = self._parse_identifier(request.id)
 
-        if not ns_id:
-            raise ValueError("Namespace must have at least one level")
+        if len(ns_id) < 2:
+            raise InvalidInputException(
+                "Namespace must have at least prefix and namespace levels"
+            )
 
         try:
+            prefix = ns_id[0]
+            namespace = ns_id[1:]
+            prefix_path = self._get_prefix_path(prefix)
+
             create_request = {
-                "namespace": ns_id,
-                "properties": request.properties or {}
+                "namespace": namespace,
+                "properties": request.properties or {},
             }
 
-            response = self.rest_client.post('/namespaces', create_request)
+            response = self.rest_client.post(
+                f"{prefix_path}/namespaces", create_request
+            )
 
-            result = CreateNamespaceResponse()
-            result.properties = response.get('properties') if response else None
-            return result
+            logger.info(f"Created namespace: {prefix}.{'.'.join(namespace)}")
 
-        except RestClientException as e:
-            if e.status_code == 409:
-                raise LanceNamespaceException.conflict(
-                    "Namespace already exists",
-                    "NAMESPACE_EXISTS",
-                    '.'.join(request.id),
-                    e.response_body
-                )
-            raise LanceNamespaceException(500, f"Failed to create namespace: {e}")
-        except Exception as e:
-            raise LanceNamespaceException(500, f"Failed to create namespace: {e}")
-
-    def describe_namespace(self, request: DescribeNamespaceRequest) -> DescribeNamespaceResponse:
-        """Describe a namespace."""
-        ns_id = self._parse_identifier(request.id)
-
-        if not ns_id:
-            raise ValueError("Namespace must have at least one level")
-
-        try:
-            namespace_path = self._encode_namespace(ns_id)
-            response = self.rest_client.get(f"/namespaces/{namespace_path}")
-
-            result = DescribeNamespaceResponse()
-            result.properties = response.get('properties') if response else None
-            return result
+            properties = response.get("properties") if response else {}
+            return CreateNamespaceResponse(properties=properties)
 
         except RestClientException as e:
-            if e.status_code == 404:
-                raise LanceNamespaceException.not_found(
-                    "Namespace not found",
-                    "NAMESPACE_NOT_FOUND",
-                    '.'.join(request.id),
-                    e.response_body
+            if e.is_conflict():
+                raise NamespaceAlreadyExistsException(
+                    f"Namespace already exists: {'.'.join(request.id)}"
                 )
-            raise LanceNamespaceException(500, f"Failed to describe namespace: {e}")
+            raise InternalException(f"Failed to create namespace: {e}")
+        except (NamespaceAlreadyExistsException, InvalidInputException):
+            raise
         except Exception as e:
-            raise LanceNamespaceException(500, f"Failed to describe namespace: {e}")
+            raise InternalException(f"Failed to create namespace: {e}")
 
-    def namespace_exists(self, request: NamespaceExistsRequest) -> None:
-        """Check if a namespace exists."""
-        describe_request = DescribeNamespaceRequest()
-        describe_request.id = request.id
-        self.describe_namespace(describe_request)
+    def describe_namespace(
+        self, request: DescribeNamespaceRequest
+    ) -> DescribeNamespaceResponse:
+        """Describe a namespace.
 
-    def drop_namespace(self, request: DropNamespaceRequest) -> DropNamespaceResponse:
-        """Drop a namespace."""
+        The first element of request.id is treated as the prefix (warehouse).
+        Remaining elements are the namespace to describe.
+        """
         ns_id = self._parse_identifier(request.id)
 
-        if not ns_id:
-            raise ValueError("Namespace must have at least one level")
+        if len(ns_id) < 2:
+            raise InvalidInputException(
+                "Namespace must have at least prefix and namespace levels"
+            )
 
         try:
-            namespace_path = self._encode_namespace(ns_id)
-            self.rest_client.delete(f"/namespaces/{namespace_path}")
-
-            return DropNamespaceResponse()
-
-        except RestClientException as e:
-            if e.status_code == 404:
-                return DropNamespaceResponse()
-            if e.status_code == 409:
-                raise LanceNamespaceException.conflict(
-                    "Namespace not empty",
-                    "NAMESPACE_NOT_EMPTY",
-                    '.'.join(request.id),
-                    e.response_body
-                )
-            raise LanceNamespaceException(500, f"Failed to drop namespace: {e}")
-        except Exception as e:
-            raise LanceNamespaceException(500, f"Failed to drop namespace: {e}")
-
-    def list_tables(self, request: ListTablesRequest) -> ListTablesResponse:
-        """List tables in a namespace."""
-        ns_id = self._parse_identifier(request.id)
-
-        if not ns_id:
-            raise ValueError("Namespace must have at least one level")
-
-        try:
-            namespace_path = self._encode_namespace(ns_id)
-            params = {}
-            if request.page_token:
-                params['pageToken'] = request.page_token
+            prefix = ns_id[0]
+            namespace = ns_id[1:]
+            prefix_path = self._get_prefix_path(prefix)
+            namespace_path = self._encode_namespace(namespace)
 
             response = self.rest_client.get(
-                f"/namespaces/{namespace_path}/tables",
-                params=params if params else None
+                f"{prefix_path}/namespaces/{namespace_path}"
+            )
+
+            properties = response.get("properties") if response else {}
+            return DescribeNamespaceResponse(properties=properties)
+
+        except RestClientException as e:
+            if e.is_not_found():
+                raise NamespaceNotFoundException(
+                    f"Namespace not found: {'.'.join(request.id)}"
+                )
+            raise InternalException(f"Failed to describe namespace: {e}")
+        except (NamespaceNotFoundException, InvalidInputException):
+            raise
+        except Exception as e:
+            raise InternalException(f"Failed to describe namespace: {e}")
+
+    def drop_namespace(self, request: DropNamespaceRequest) -> DropNamespaceResponse:
+        """Drop a namespace.
+
+        The first element of request.id is treated as the prefix (warehouse).
+        Remaining elements are the namespace to drop.
+        """
+        if request.behavior and request.behavior.lower() == "cascade":
+            raise InvalidInputException(
+                "Cascade behavior is not supported for this implementation"
+            )
+
+        ns_id = self._parse_identifier(request.id)
+
+        if len(ns_id) < 2:
+            raise InvalidInputException(
+                "Namespace must have at least prefix and namespace levels"
+            )
+
+        try:
+            prefix = ns_id[0]
+            namespace = ns_id[1:]
+            prefix_path = self._get_prefix_path(prefix)
+            namespace_path = self._encode_namespace(namespace)
+
+            self.rest_client.delete(f"{prefix_path}/namespaces/{namespace_path}")
+
+            logger.info(f"Dropped namespace: {prefix}.{'.'.join(namespace)}")
+
+            return DropNamespaceResponse(properties={})
+
+        except RestClientException as e:
+            if e.is_not_found():
+                return DropNamespaceResponse(properties={})
+            if e.is_conflict():
+                raise InternalException(f"Namespace not empty: {'.'.join(request.id)}")
+            raise InternalException(f"Failed to drop namespace: {e}")
+        except InvalidInputException:
+            raise
+        except Exception as e:
+            raise InternalException(f"Failed to drop namespace: {e}")
+
+    def list_tables(self, request: ListTablesRequest) -> ListTablesResponse:
+        """List tables in a namespace.
+
+        The first element of request.id is treated as the prefix (warehouse).
+        Remaining elements are the namespace to list tables from.
+        """
+        ns_id = self._parse_identifier(request.id)
+
+        if len(ns_id) < 2:
+            raise InvalidInputException("Must specify at least prefix and namespace")
+
+        try:
+            prefix = ns_id[0]
+            namespace = ns_id[1:]
+            prefix_path = self._get_prefix_path(prefix)
+            namespace_path = self._encode_namespace(namespace)
+
+            params = {}
+            if request.page_token:
+                params["pageToken"] = request.page_token
+
+            response = self.rest_client.get(
+                f"{prefix_path}/namespaces/{namespace_path}/tables",
+                params=params if params else None,
             )
 
             tables = []
-            if response and 'identifiers' in response:
-                for table_id in response['identifiers']:
-                    table_name = table_id.get('name')
-                    if table_name and self._is_lance_table(ns_id, table_name):
+            if response and "identifiers" in response:
+                for table_id in response["identifiers"]:
+                    table_name = table_id.get("name")
+                    if table_name and self._is_lance_table(
+                        prefix, namespace, table_name
+                    ):
                         tables.append(table_name)
 
             tables = sorted(set(tables))
 
-            result = ListTablesResponse()
-            result.tables = tables
-            return result
+            return ListTablesResponse(tables=tables)
 
+        except RestClientException as e:
+            if e.is_not_found():
+                raise NamespaceNotFoundException(
+                    f"Namespace not found: {'.'.join(ns_id)}"
+                )
+            raise InternalException(f"Failed to list tables: {e}")
+        except (NamespaceNotFoundException, InvalidInputException):
+            raise
         except Exception as e:
-            if isinstance(e, LanceNamespaceException):
-                raise
-            raise LanceNamespaceException(500, f"Failed to list tables: {e}")
+            raise InternalException(f"Failed to list tables: {e}")
 
-    def create_empty_table(self, request: CreateEmptyTableRequest) -> CreateEmptyTableResponse:
-        """Create an empty table (metadata only operation)."""
+    def declare_table(self, request: DeclareTableRequest) -> DeclareTableResponse:
+        """Declare a table (metadata only operation).
+
+        The first element of request.id is treated as the prefix (warehouse).
+        Middle elements are the namespace, last element is the table name.
+        """
         table_id = self._parse_identifier(request.id)
 
-        if len(table_id) < 2:
-            raise ValueError("Table identifier must have at least namespace and table name")
+        if len(table_id) < 3:
+            raise InvalidInputException(
+                "Table identifier must have prefix, namespace, and table name"
+            )
 
-        namespace = table_id[:-1]
+        prefix = table_id[0]
+        namespace = table_id[1:-1]
         table_name = table_id[-1]
 
         try:
+            prefix_path = self._get_prefix_path(prefix)
+
             table_path = request.location
             if not table_path:
-                table_path = f"{self.config.root}/{'/'.join(namespace)}/{table_name}"
+                table_path = (
+                    f"{self.config.root}/{'/'.join(table_id[:-1])}/{table_name}"
+                )
 
-            properties = {
-                self.TABLE_TYPE_KEY: self.TABLE_TYPE_LANCE
-            }
-            if request.properties:
-                properties.update(request.properties)
+            properties = {self.TABLE_TYPE_KEY: self.TABLE_TYPE_LANCE}
 
             create_request = {
                 "name": table_name,
                 "location": table_path,
                 "schema": create_dummy_schema(),
-                "properties": properties
+                "properties": properties,
             }
 
             namespace_path = self._encode_namespace(namespace)
-            response = self.rest_client.post(
-                f"/namespaces/{namespace_path}/tables",
-                create_request
+            self.rest_client.post(
+                f"{prefix_path}/namespaces/{namespace_path}/tables", create_request
             )
 
-            result = CreateEmptyTableResponse()
-            result.location = table_path
-            if response and 'metadata' in response:
-                result.properties = response['metadata'].get('properties')
-            return result
+            logger.info(f"Declared table: {'.'.join(table_id)}")
+
+            return DeclareTableResponse(location=table_path)
 
         except RestClientException as e:
-            if e.status_code == 409:
-                raise LanceNamespaceException.conflict(
-                    "Table already exists",
-                    "TABLE_EXISTS",
-                    '.'.join(request.id),
-                    e.response_body
+            if e.is_conflict():
+                raise TableAlreadyExistsException(
+                    f"Table already exists: {'.'.join(request.id)}"
                 )
-            if e.status_code == 404:
-                raise LanceNamespaceException.not_found(
-                    "Namespace not found",
-                    "NAMESPACE_NOT_FOUND",
-                    '.'.join(namespace),
-                    e.response_body
+            if e.is_not_found():
+                raise NamespaceNotFoundException(
+                    f"Namespace not found: {prefix}.{'.'.join(namespace)}"
                 )
-            raise LanceNamespaceException(500, f"Failed to create empty table: {e}")
+            raise InternalException(f"Failed to declare table: {e}")
+        except (
+            TableAlreadyExistsException,
+            NamespaceNotFoundException,
+            InvalidInputException,
+        ):
+            raise
         except Exception as e:
-            raise LanceNamespaceException(500, f"Failed to create empty table: {e}")
+            raise InternalException(f"Failed to declare table: {e}")
+
+    def create_empty_table(
+        self, request: CreateEmptyTableRequest
+    ) -> CreateEmptyTableResponse:
+        """Create an empty table (metadata only operation).
+
+        .. deprecated::
+            Use :meth:`declare_table` instead.
+        """
+        warnings.warn(
+            "create_empty_table is deprecated, use declare_table instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        declare_request = DeclareTableRequest()
+        declare_request.id = request.id
+        declare_request.location = request.location
+        response = self.declare_table(declare_request)
+        return CreateEmptyTableResponse(location=response.location)
 
     def describe_table(self, request: DescribeTableRequest) -> DescribeTableResponse:
-        """Describe a table."""
+        """Describe a table.
+
+        The first element of request.id is treated as the prefix (warehouse).
+        Middle elements are the namespace, last element is the table name.
+        """
+        if request.load_detailed_metadata:
+            raise InvalidInputException(
+                "load_detailed_metadata=true is not supported for this implementation"
+            )
+
         table_id = self._parse_identifier(request.id)
 
-        if len(table_id) < 2:
-            raise ValueError("Table identifier must have at least namespace and table name")
+        if len(table_id) < 3:
+            raise InvalidInputException(
+                "Table identifier must have prefix, namespace, and table name"
+            )
 
-        namespace = table_id[:-1]
+        prefix = table_id[0]
+        namespace = table_id[1:-1]
         table_name = table_id[-1]
 
         try:
+            prefix_path = self._get_prefix_path(prefix)
             namespace_path = self._encode_namespace(namespace)
-            encoded_table_name = urllib.parse.quote(table_name, safe='')
+            encoded_table_name = urllib.parse.quote(table_name, safe="")
 
             response = self.rest_client.get(
-                f"/namespaces/{namespace_path}/tables/{encoded_table_name}"
+                f"{prefix_path}/namespaces/{namespace_path}/tables/{encoded_table_name}"
             )
 
-            if not response or 'metadata' not in response:
-                raise LanceNamespaceException.not_found(
-                    "Table not found",
-                    "TABLE_NOT_FOUND",
-                    '.'.join(request.id),
-                    "No metadata"
+            if not response or "metadata" not in response:
+                raise TableNotFoundException(f"Table not found: {'.'.join(request.id)}")
+
+            metadata = response["metadata"]
+            props = metadata.get("properties", {})
+
+            if (
+                not props.get(self.TABLE_TYPE_KEY, "").lower()
+                == self.TABLE_TYPE_LANCE.lower()
+            ):
+                raise InvalidInputException(
+                    f"Table {'.'.join(request.id)} is not a Lance table"
                 )
 
-            metadata = response['metadata']
-            props = metadata.get('properties', {})
-
-            if not props.get(self.TABLE_TYPE_KEY, '').lower() == self.TABLE_TYPE_LANCE.lower():
-                raise LanceNamespaceException.bad_request(
-                    "Not a Lance table",
-                    "INVALID_TABLE",
-                    '.'.join(request.id),
-                    "Table is not managed by Lance"
-                )
-
-            result = DescribeTableResponse()
-            result.location = metadata.get('location')
-            result.properties = props
-            return result
+            return DescribeTableResponse(
+                location=metadata.get("location"), storage_options=props
+            )
 
         except RestClientException as e:
-            if e.status_code == 404:
-                raise LanceNamespaceException.not_found(
-                    "Table not found",
-                    "TABLE_NOT_FOUND",
-                    '.'.join(request.id),
-                    e.response_body
-                )
-            raise LanceNamespaceException(500, f"Failed to describe table: {e}")
+            if e.is_not_found():
+                raise TableNotFoundException(f"Table not found: {'.'.join(request.id)}")
+            raise InternalException(f"Failed to describe table: {e}")
+        except (TableNotFoundException, InvalidInputException):
+            raise
         except Exception as e:
-            if isinstance(e, LanceNamespaceException):
-                raise
-            raise LanceNamespaceException(500, f"Failed to describe table: {e}")
+            raise InternalException(f"Failed to describe table: {e}")
 
-    def table_exists(self, request: TableExistsRequest) -> None:
-        """Check if a table exists."""
-        describe_request = DescribeTableRequest()
-        describe_request.id = request.id
-        self.describe_table(describe_request)
+    def deregister_table(
+        self, request: DeregisterTableRequest
+    ) -> DeregisterTableResponse:
+        """Deregister a table (remove from catalog without deleting data).
 
-    def drop_table(self, request: DropTableRequest) -> DropTableResponse:
-        """Drop a table."""
+        The first element of request.id is treated as the prefix (warehouse).
+        Middle elements are the namespace, last element is the table name.
+        """
         table_id = self._parse_identifier(request.id)
 
-        if len(table_id) < 2:
-            raise ValueError("Table identifier must have at least namespace and table name")
+        if len(table_id) < 3:
+            raise InvalidInputException(
+                "Table identifier must have prefix, namespace, and table name"
+            )
 
-        namespace = table_id[:-1]
+        prefix = table_id[0]
+        namespace = table_id[1:-1]
         table_name = table_id[-1]
 
         try:
+            prefix_path = self._get_prefix_path(prefix)
             namespace_path = self._encode_namespace(namespace)
-            encoded_table_name = urllib.parse.quote(table_name, safe='')
+            encoded_table_name = urllib.parse.quote(table_name, safe="")
 
-            table_location = None
-            try:
-                response = self.rest_client.get(
-                    f"/namespaces/{namespace_path}/tables/{encoded_table_name}"
-                )
-                if response and 'metadata' in response:
-                    table_location = response['metadata'].get('location')
-            except RestClientException as e:
-                if e.status_code == 404:
-                    result = DropTableResponse()
-                    result.id = request.id
-                    return result
-
-            self.rest_client.delete(
-                f"/namespaces/{namespace_path}/tables/{encoded_table_name}",
-                params={'purgeRequested': 'false'}
+            response = self.rest_client.get(
+                f"{prefix_path}/namespaces/{namespace_path}/tables/{encoded_table_name}"
             )
 
-            result = DropTableResponse()
-            result.id = request.id
-            result.location = table_location
-            return result
+            table_location = None
+            if response and "metadata" in response:
+                table_location = response["metadata"].get("location")
 
+            self.rest_client.delete(
+                f"{prefix_path}/namespaces/{namespace_path}/tables/{encoded_table_name}",
+                params={"purgeRequested": "false"},
+            )
+
+            logger.info(f"Deregistered table: {'.'.join(table_id)}")
+
+            return DeregisterTableResponse(location=table_location)
+
+        except RestClientException as e:
+            if e.is_not_found():
+                raise TableNotFoundException(f"Table not found: {'.'.join(request.id)}")
+            raise InternalException(f"Failed to deregister table: {e}")
+        except (TableNotFoundException, InvalidInputException):
+            raise
         except Exception as e:
-            if isinstance(e, LanceNamespaceException):
-                raise
-            raise LanceNamespaceException(500, f"Failed to drop table: {e}")
+            raise InternalException(f"Failed to deregister table: {e}")
 
     def close(self):
         """Close the namespace connection."""
@@ -572,19 +600,25 @@ class IcebergNamespace(LanceNamespace):
         """Parse identifier list."""
         return identifier if identifier else []
 
-    def _is_lance_table(self, namespace: List[str], table_name: str) -> bool:
+    def _is_lance_table(
+        self, prefix: str, namespace: List[str], table_name: str
+    ) -> bool:
         """Check if a table is a Lance table."""
         try:
+            prefix_path = self._get_prefix_path(prefix)
             namespace_path = self._encode_namespace(namespace)
-            encoded_table_name = urllib.parse.quote(table_name, safe='')
+            encoded_table_name = urllib.parse.quote(table_name, safe="")
 
             response = self.rest_client.get(
-                f"/namespaces/{namespace_path}/tables/{encoded_table_name}"
+                f"{prefix_path}/namespaces/{namespace_path}/tables/{encoded_table_name}"
             )
 
-            if response and 'metadata' in response:
-                props = response['metadata'].get('properties', {})
-                return props.get(self.TABLE_TYPE_KEY, '').lower() == self.TABLE_TYPE_LANCE.lower()
+            if response and "metadata" in response:
+                props = response["metadata"].get("properties", {})
+                return (
+                    props.get(self.TABLE_TYPE_KEY, "").lower()
+                    == self.TABLE_TYPE_LANCE.lower()
+                )
         except Exception as e:
             logger.debug(f"Failed to check if table is Lance table: {e}")
         return False

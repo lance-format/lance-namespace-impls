@@ -10,12 +10,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Java
+name: Python Glue
 
 on:
   push:
     branches:
       - main
+    paths:
+      - python/src/lance_namespace_impls/glue.py
+      - python/tests/test_glue.py
+      - python/tests/test_glue_integration.py
+      - python/pyproject.toml
+      - .github/workflows/python-glue.yml
   pull_request:
     types:
       - opened
@@ -23,41 +29,38 @@ on:
       - ready_for_review
       - reopened
     paths:
-      - java/**
-      - .github/workflows/java.yml
+      - python/src/lance_namespace_impls/glue.py
+      - python/tests/test_glue.py
+      - python/tests/test_glue_integration.py
+      - python/pyproject.toml
+      - .github/workflows/python-glue.yml
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  linux-build:
+  test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 30
     strategy:
       matrix:
-        java-version: [ 11, 17 ]
+        python-version: ["3.10", "3.11", "3.12"]
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          distribution: temurin
-          java-version: ${{ matrix.java-version }}
-          cache: "maven"
-      - name: Check code style
-        working-directory: java
-        run: ./mvnw spotless:check
-      - name: Build with Java ${{ matrix.java-version }}
-        working-directory: java
-        run: ./mvnw install -DskipTests
-      - name: Run unit tests
-        working-directory: java
-        run: |
-          ./mvnw test -pl lance-namespace-glue
-          ./mvnw test -pl lance-namespace-polaris
-      - name: Build all modules with make (Java 17 only)
-        if: matrix.java-version == 17
-        working-directory: java
-        run: make build
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+      - name: Install dependencies
+        working-directory: python
+        run: make install-glue
+      - name: Lint
+        working-directory: python
+        run: make lint-glue
+      - name: Test
+        working-directory: python
+        run: make test-glue

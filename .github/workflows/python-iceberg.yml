@@ -1,0 +1,64 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Python Iceberg
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - python/src/lance_namespace_impls/iceberg.py
+      - python/tests/test_iceberg.py
+      - python/pyproject.toml
+      - .github/workflows/python-iceberg.yml
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - ready_for_review
+      - reopened
+    paths:
+      - python/src/lance_namespace_impls/iceberg.py
+      - python/tests/test_iceberg.py
+      - python/pyproject.toml
+      - .github/workflows/python-iceberg.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+      - name: Install dependencies
+        working-directory: python
+        run: make install-iceberg
+      - name: Lint
+        working-directory: python
+        run: make lint-iceberg
+      - name: Test
+        working-directory: python
+        run: make test-iceberg

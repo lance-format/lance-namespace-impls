@@ -70,11 +70,11 @@ CreateNamespaceRequest request = new CreateNamespaceRequest();
 request.setId(Arrays.asList("unity", "my_schema"));
 namespace.createNamespace(request);
 
-// Create a table
-CreateTableRequest tableRequest = new CreateTableRequest();
+// Declare a table entry (use lance SDK to create the actual table)
+DeclareTableRequest tableRequest = new DeclareTableRequest();
 tableRequest.setId(Arrays.asList("unity", "my_schema", "my_table"));
-tableRequest.setJsonArrowSchema(arrowSchema);
-namespace.createTable(tableRequest);
+tableRequest.setLocation("/path/to/storage/my_schema/my_table");
+namespace.declareTable(tableRequest);
 ```
 
 ## Integration with Unity Catalog

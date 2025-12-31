@@ -6,6 +6,8 @@ This document describes how the Polaris Catalog implements the Lance Namespace c
 
 Apache Polaris is an open-source catalog implementation for Apache Iceberg that provides a REST API for managing tables and namespaces. Polaris supports the Generic Table API which allows registering non-Iceberg table formats. For details on Polaris Catalog, see the [Polaris Catalog Documentation](https://polaris.apache.org).
 
+**Note:** The Generic Table API is available in Polaris 1.2.0-incubating and later versions. Ensure your Polaris deployment is running a compatible version.
+
 ## Namespace Implementation Configuration Properties
 
 The Lance Polaris namespace implementation accepts the following configuration properties:
@@ -24,11 +26,14 @@ The **max_retries** property is optional and specifies the maximum number of ret
 
 ### Namespace
 
-The **root namespace** is represented by the Polaris catalog root, accessed via the `/namespaces` endpoint.
+The **namespace identifier** follows a hierarchical structure where the first level represents the Polaris catalog (warehouse), and subsequent levels represent namespaces within that catalog. For example, `my_catalog.my_schema` refers to namespace `my_schema` in catalog `my_catalog`.
 
-A **child namespace** is a nested namespace in Polaris. Polaris supports arbitrary nesting depth, allowing flexible namespace organization. First-level namespaces typically represent catalogs, with subsequent levels representing schemas or other organizational units.
+A **child namespace** is a nested namespace in Polaris. Polaris supports arbitrary nesting depth, allowing flexible namespace organization within a catalog.
 
-The **namespace identifier** is constructed by joining namespace levels with the `.` delimiter (e.g., `catalog.schema`). When making API calls, the namespace path is URL-encoded.
+The **namespace identifier** is constructed by joining the catalog and namespace levels with the `.` delimiter (e.g., `catalog.schema.subschema`). When making API calls:
+- The catalog is extracted as the first level
+- Remaining levels form the namespace path within that catalog
+- The namespace path is URL-encoded using `.` as the separator
 
 **Namespace properties** are stored in the namespace's properties map, returned by the Polaris namespace API.
 
@@ -54,10 +59,11 @@ Creates a new namespace in Polaris.
 
 The implementation:
 
-1. Parse the namespace identifier to get the namespace path
-2. Construct a CreateNamespaceRequest with the namespace array and properties
-3. POST to `/namespaces` endpoint
-4. Return the created namespace properties
+1. Parse the namespace identifier to extract the catalog (first level) and namespace levels
+2. Validate that at least 2 levels are provided (catalog + namespace)
+3. Construct a CreateNamespaceRequest with the namespace array and properties
+4. POST to `/api/catalog/v1/{catalog}/namespaces` endpoint
+5. Return the created namespace properties
 
 **Error Handling:**
 
@@ -69,10 +75,11 @@ Lists child namespaces under a given parent namespace.
 
 The implementation:
 
-1. Parse the parent namespace identifier
-2. For root namespace: GET `/namespaces`
-3. For nested namespace: GET `/namespaces/{parent}/namespaces`
-4. Convert the response namespace arrays to dot-separated strings
+1. Parse the parent namespace identifier to extract the catalog (first level)
+2. Validate that at least 1 level (catalog) is provided
+3. For catalog-level listing: GET `/api/catalog/v1/{catalog}/namespaces`
+4. For nested namespace listing: GET `/api/catalog/v1/{catalog}/namespaces/{parent}/namespaces`
+5. Convert the response namespace arrays to dot-separated strings, prefixing with the catalog name
 
 **Error Handling:**
 
@@ -84,9 +91,10 @@ Retrieves properties and metadata for a namespace.
 
 The implementation:
 
-1. Parse the namespace identifier
-2. GET `/namespaces/{namespace}` with URL-encoded namespace path
-3. Return the namespace properties
+1. Parse the namespace identifier to extract the catalog (first level) and namespace path
+2. Validate that at least 2 levels are provided (catalog + namespace)
+3. GET `/api/catalog/v1/{catalog}/namespaces/{namespace}` with URL-encoded namespace path
+4. Return the namespace properties
 
 **Error Handling:**
 
@@ -94,16 +102,21 @@ If the namespace does not exist, return error code `1` (NamespaceNotFound). If t
 
 ### DropNamespace
 
-Removes a namespace from Polaris.
+Removes a namespace from Polaris. Only RESTRICT mode is supported; CASCADE mode is not implemented.
 
 The implementation:
 
-1. Parse the namespace identifier
-2. DELETE `/namespaces/{namespace}` with URL-encoded namespace path
+1. Parse the namespace identifier to extract the catalog (first level) and namespace path
+2. Validate that at least 2 levels are provided (catalog + namespace)
+3. DELETE `/api/catalog/v1/{catalog}/namespaces/{namespace}` with URL-encoded namespace path
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the namespace is not empty, return error code `3` (NamespaceNotEmpty). If the server returns an error, return error code `18` (Internal).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the namespace is not empty, return error code `3` (NamespaceNotEmpty).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DeclareTable
 
@@ -111,15 +124,16 @@ Declares a new Lance table in Polaris without creating the underlying data.
 
 The implementation:
 
-1. Parse the table identifier to extract namespace and table name
-2. Construct a CreateGenericTableRequest with:
+1. Parse the table identifier to extract catalog (first level), namespace (middle levels), and table name (last level)
+2. Validate that at least 3 levels are provided (catalog + namespace + table)
+3. Construct a CreateGenericTableRequest with:
     - `name`: the table name
     - `format`: `lance`
     - `base-location`: the specified location
     - `doc`: optional description from properties
     - `properties`: table properties including `table_type=lance`
-3. POST to `/namespaces/{namespace}/generic-tables`
-4. Return the created table location and properties
+4. POST to `/api/catalog/polaris/v1/{catalog}/namespaces/{namespace}/generic-tables`
+5. Return the created table location and properties
 
 **Error Handling:**
 
@@ -131,9 +145,10 @@ Lists all Lance tables in a namespace.
 
 The implementation:
 
-1. Parse the namespace identifier
-2. GET `/namespaces/{namespace}/generic-tables`
-3. Extract table names from the response identifiers
+1. Parse the namespace identifier to extract the catalog (first level) and namespace path
+2. Validate that at least 2 levels are provided (catalog + namespace)
+3. GET `/api/catalog/polaris/v1/{catalog}/namespaces/{namespace}/generic-tables`
+4. Extract table names from the response identifiers
 
 **Error Handling:**
 
@@ -141,18 +156,23 @@ If the namespace does not exist, return error code `1` (NamespaceNotFound). If t
 
 ### DescribeTable
 
-Retrieves metadata for a Lance table.
+Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. When `load_detailed_metadata=false`, only the table location and storage_options are returned; other fields (version, table_uri, schema, stats) are null.
 
 The implementation:
 
-1. Parse the table identifier to extract namespace and table name
-2. GET `/namespaces/{namespace}/generic-tables/{table}`
-3. Verify the table format is `lance`
-4. Return the table location, properties, and optional doc as comment
+1. Parse the table identifier to extract catalog (first level), namespace (middle levels), and table name (last level)
+2. Validate that at least 3 levels are provided (catalog + namespace + table)
+3. GET `/api/catalog/polaris/v1/{catalog}/namespaces/{namespace}/generic-tables/{table}`
+4. Verify the table format is `lance`
+5. Return the table location from `base-location` and storage_options from `properties`
 
 **Error Handling:**
 
-If the table does not exist, return error code `4` (TableNotFound). If the table format is not `lance`, return error code `13` (InvalidInput). If the server returns an error, return error code `18` (Internal).
+If the table does not exist, return error code `4` (TableNotFound).
+
+If the table format is not `lance`, return error code `13` (InvalidInput).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DeregisterTable
 
@@ -160,8 +180,9 @@ Removes a Lance table registration from Polaris without deleting the underlying 
 
 The implementation:
 
-1. Parse the table identifier to extract namespace and table name
-2. DELETE `/namespaces/{namespace}/generic-tables/{table}`
+1. Parse the table identifier to extract catalog (first level), namespace (middle levels), and table name (last level)
+2. Validate that at least 3 levels are provided (catalog + namespace + table)
+3. DELETE `/api/catalog/polaris/v1/{catalog}/namespaces/{namespace}/generic-tables/{table}`
 
 **Error Handling:**
 

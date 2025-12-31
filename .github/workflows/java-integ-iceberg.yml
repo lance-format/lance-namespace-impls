@@ -1,0 +1,105 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Java Iceberg Integration
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - java/lance-namespace-iceberg/**
+      - docker/iceberg/**
+      - .github/workflows/java-integ-iceberg.yml
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - ready_for_review
+      - reopened
+    paths:
+      - java/lance-namespace-iceberg/**
+      - docker/iceberg/**
+      - .github/workflows/java-integ-iceberg.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+          cache: "maven"
+      - name: Start Iceberg REST Catalog (Lakekeeper)
+        run: make docker-up-iceberg
+      - name: Wait for Iceberg REST Catalog
+        run: |
+          echo "Waiting for Iceberg REST Catalog to be ready..."
+          timeout 180 bash -c '
+            until curl -sf http://localhost:8282/health > /dev/null 2>&1; do
+              echo "Waiting for health endpoint..."
+              sleep 5
+            done
+          ' || {
+            echo "Timeout waiting for Iceberg REST Catalog"
+            docker compose -f docker/iceberg/docker-compose.yml logs
+            exit 1
+          }
+          echo "Iceberg REST Catalog is ready"
+
+          # Wait for setup to complete (creates test_warehouse)
+          echo "Waiting for warehouse setup to complete..."
+          timeout 60 bash -c '
+            while docker ps -q -f name=lakekeeper-setup 2>/dev/null | grep -q .; do
+              echo "Waiting for setup container to finish..."
+              sleep 2
+            done
+          ' || echo "Setup may have already completed"
+
+          # Verify warehouse exists
+          echo "Verifying test_warehouse exists..."
+          WAREHOUSES=$(curl -s http://localhost:8282/management/v1/warehouse || echo "")
+
+          if echo "$WAREHOUSES" | grep -q "test_warehouse"; then
+            echo "test_warehouse verified"
+          else
+            echo "Warning: test_warehouse not found in warehouses: $WAREHOUSES"
+            docker compose -f docker/iceberg/docker-compose.yml logs lakekeeper-setup
+          fi
+      - name: Build
+        run: make build-java
+      - name: Run integration tests
+        run: make java-integ-test-iceberg
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Docker Compose Status ==="
+          docker compose -f docker/iceberg/docker-compose.yml ps
+          echo ""
+          echo "=== Iceberg REST Catalog Logs ==="
+          docker compose -f docker/iceberg/docker-compose.yml logs lakekeeper
+          echo ""
+          echo "=== PostgreSQL Logs ==="
+          docker compose -f docker/iceberg/docker-compose.yml logs postgres-lakekeeper
+      - name: Cleanup
+        if: always()
+        run: make docker-down-iceberg

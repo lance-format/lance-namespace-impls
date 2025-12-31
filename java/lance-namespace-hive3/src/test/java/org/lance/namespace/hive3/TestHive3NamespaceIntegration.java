@@ -13,17 +13,18 @@
  */
 package org.lance.namespace.hive3;
 
-import org.lance.namespace.LanceNamespaceException;
+import org.lance.namespace.errors.InvalidInputException;
+import org.lance.namespace.errors.LanceNamespaceException;
 import org.lance.namespace.model.CreateEmptyTableRequest;
 import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeregisterTableRequest;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
 import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 import org.lance.namespace.model.DropNamespaceRequest;
-import org.lance.namespace.model.DropTableRequest;
 import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
@@ -31,6 +32,8 @@ import org.lance.namespace.model.ListTablesResponse;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hive.conf.HiveConf;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -96,8 +99,12 @@ public class TestHive3NamespaceIntegration {
     testCatalog = "hive"; // Default catalog in Hive 3.x
     testDatabase = "test_db_" + uniqueId;
 
+    // Set up Hadoop configuration with metastore URI
+    Configuration hadoopConf = new Configuration();
+    hadoopConf.set(HiveConf.ConfVars.METASTOREURIS.varname, METASTORE_URI);
+    namespace.setConf(hadoopConf);
+
     Map<String, String> config = new HashMap<>();
-    config.put("hive.metastore.uris", METASTORE_URI);
     config.put("client.pool-size", "3");
     config.put("root", "/tmp/lance-integration-test");
 
@@ -110,19 +117,13 @@ public class TestHive3NamespaceIntegration {
       // Clean up test database
       DropNamespaceRequest dropRequest = new DropNamespaceRequest();
       dropRequest.setId(Arrays.asList(testCatalog, testDatabase));
-      dropRequest.setBehavior(DropNamespaceRequest.BehaviorEnum.CASCADE);
+      dropRequest.setBehavior("Restrict");
       namespace.dropNamespace(dropRequest);
     } catch (Exception e) {
       // Ignore cleanup errors
     }
 
-    if (namespace != null) {
-      try {
-        namespace.close();
-      } catch (Exception e) {
-        // Ignore
-      }
-    }
+    // Namespace cleanup handled by Hive internals
 
     if (allocator != null) {
       allocator.close();
@@ -157,8 +158,8 @@ public class TestHive3NamespaceIntegration {
 
     DescribeNamespaceResponse describeResponse = namespace.describeNamespace(describeRequest);
     assertThat(describeResponse).isNotNull();
-    assertThat(describeResponse.getProperties()).containsEntry(
-        "database.description", "Integration test database");
+    assertThat(describeResponse.getProperties())
+        .containsEntry("database.description", "Integration test database");
 
     // List databases in catalog
     ListNamespacesRequest listRequest = new ListNamespacesRequest();
@@ -184,7 +185,8 @@ public class TestHive3NamespaceIntegration {
     nsRequest.setId(Arrays.asList(testCatalog, testDatabase));
     namespace.createNamespace(nsRequest);
 
-    String tableName = "test_table_" + UUID.randomUUID().toString().substring(0, 8).replace("-", "");
+    String tableName =
+        "test_table_" + UUID.randomUUID().toString().substring(0, 8).replace("-", "");
 
     // Create empty table (declare table without data)
     CreateEmptyTableRequest createRequest = new CreateEmptyTableRequest();
@@ -200,7 +202,6 @@ public class TestHive3NamespaceIntegration {
 
     DescribeTableResponse describeResponse = namespace.describeTable(describeRequest);
     assertThat(describeResponse.getLocation()).contains(tableName);
-    assertThat(describeResponse.getProperties()).containsEntry("table_type", "lance");
 
     // List tables
     ListTablesRequest listRequest = new ListTablesRequest();
@@ -209,10 +210,10 @@ public class TestHive3NamespaceIntegration {
     ListTablesResponse listResponse = namespace.listTables(listRequest);
     assertThat(listResponse.getTables()).contains(tableName);
 
-    // Drop table
-    DropTableRequest dropRequest = new DropTableRequest();
-    dropRequest.setId(Arrays.asList(testCatalog, testDatabase, tableName));
-    namespace.dropTable(dropRequest);
+    // Deregister table
+    DeregisterTableRequest deregisterRequest = new DeregisterTableRequest();
+    deregisterRequest.setId(Arrays.asList(testCatalog, testDatabase, tableName));
+    namespace.deregisterTable(deregisterRequest);
 
     // Verify table doesn't exist
     assertThatThrownBy(() -> namespace.describeTable(describeRequest))
@@ -220,29 +221,14 @@ public class TestHive3NamespaceIntegration {
   }
 
   @Test
-  public void testCascadeDropDatabase() {
-    // Create database
-    CreateNamespaceRequest nsRequest = new CreateNamespaceRequest();
-    nsRequest.setId(Arrays.asList(testCatalog, testDatabase));
-    namespace.createNamespace(nsRequest);
-
-    // Create a table in the database
-    String tableName = "cascade_test_table";
-    CreateEmptyTableRequest tableRequest = new CreateEmptyTableRequest();
-    tableRequest.setId(Arrays.asList(testCatalog, testDatabase, tableName));
-    tableRequest.setLocation("/tmp/lance-integration-test/" + testDatabase + "/" + tableName);
-    namespace.createEmptyTable(tableRequest);
-
-    // Drop database with cascade
+  public void testCascadeDropDatabaseRejected() {
+    // Drop database with cascade - should be rejected
     DropNamespaceRequest dropRequest = new DropNamespaceRequest();
     dropRequest.setId(Arrays.asList(testCatalog, testDatabase));
-    dropRequest.setBehavior(DropNamespaceRequest.BehaviorEnum.CASCADE);
-    namespace.dropNamespace(dropRequest);
+    dropRequest.setBehavior("Cascade");
 
-    // Verify database doesn't exist
-    DescribeNamespaceRequest describeRequest = new DescribeNamespaceRequest();
-    describeRequest.setId(Arrays.asList(testCatalog, testDatabase));
-    assertThatThrownBy(() -> namespace.describeNamespace(describeRequest))
-        .isInstanceOf(LanceNamespaceException.class);
+    assertThatThrownBy(() -> namespace.dropNamespace(dropRequest))
+        .isInstanceOf(InvalidInputException.class)
+        .hasMessageContaining("Cascade behavior is not supported");
   }
 }

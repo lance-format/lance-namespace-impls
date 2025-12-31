@@ -13,7 +13,12 @@
  */
 package org.lance.namespace.glue;
 
-import org.lance.namespace.LanceNamespaceException;
+import org.lance.namespace.errors.InternalException;
+import org.lance.namespace.errors.LanceNamespaceException;
+import org.lance.namespace.errors.NamespaceAlreadyExistsException;
+import org.lance.namespace.errors.NamespaceNotFoundException;
+import org.lance.namespace.errors.TableAlreadyExistsException;
+import org.lance.namespace.errors.TableNotFoundException;
 
 import software.amazon.awssdk.services.glue.model.GlueException;
 
@@ -22,27 +27,30 @@ public class GlueToLanceErrorConverter {
   private GlueToLanceErrorConverter() {}
 
   public static LanceNamespaceException notFound(GlueException e, String message, Object... args) {
-    return LanceNamespaceException.notFound(
-        String.format(message, args),
-        e.getMessage().getClass().getSimpleName(),
-        e.requestId(),
-        e.getMessage());
+    return new TableNotFoundException(
+        String.format(message, args), e.getClass().getSimpleName(), e.requestId());
+  }
+
+  public static LanceNamespaceException namespaceNotFound(
+      GlueException e, String message, Object... args) {
+    return new NamespaceNotFoundException(
+        String.format(message, args), e.getClass().getSimpleName(), e.requestId());
   }
 
   public static LanceNamespaceException conflict(GlueException e, String message, Object... args) {
-    return LanceNamespaceException.notFound(
-        String.format(message, args),
-        e.getMessage().getClass().getSimpleName(),
-        e.requestId(),
-        e.getMessage());
+    return new NamespaceAlreadyExistsException(
+        String.format(message, args), e.getClass().getSimpleName(), e.requestId());
+  }
+
+  public static LanceNamespaceException tableConflict(
+      GlueException e, String message, Object... args) {
+    return new TableAlreadyExistsException(
+        String.format(message, args), e.getClass().getSimpleName(), e.requestId());
   }
 
   public static LanceNamespaceException serverError(
       GlueException e, String message, Object... args) {
-    return LanceNamespaceException.serverError(
-        String.format(message, args),
-        e.getMessage().getClass().getSimpleName(),
-        e.requestId(),
-        e.getMessage());
+    return new InternalException(
+        String.format(message, args), e.getClass().getSimpleName(), e.requestId());
   }
 }

@@ -418,6 +418,31 @@ public class IcebergModels {
     }
   }
 
+  @JsonIgnoreProperties(ignoreUnknown = true)
+  public static class ConfigResponse {
+    @JsonProperty("defaults")
+    private Map<String, String> defaults;
+
+    @JsonProperty("overrides")
+    private Map<String, String> overrides;
+
+    public Map<String, String> getDefaults() {
+      return defaults;
+    }
+
+    public void setDefaults(Map<String, String> defaults) {
+      this.defaults = defaults;
+    }
+
+    public Map<String, String> getOverrides() {
+      return overrides;
+    }
+
+    public void setOverrides(Map<String, String> overrides) {
+      this.overrides = overrides;
+    }
+  }
+
   public static IcebergSchema createDummySchema() {
     IcebergSchema schema = new IcebergSchema();
     schema.setType("struct");
@@ -429,7 +454,7 @@ public class IcebergModels {
     dummyField.setRequired(false);
     dummyField.setType("string");
 
-    schema.setFields(List.of(dummyField));
+    schema.setFields(java.util.Collections.singletonList(dummyField));
     return schema;
   }
 }

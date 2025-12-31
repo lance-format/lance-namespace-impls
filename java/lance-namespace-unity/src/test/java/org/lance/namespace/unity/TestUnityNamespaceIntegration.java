@@ -13,17 +13,18 @@
  */
 package org.lance.namespace.unity;
 
-import org.lance.namespace.LanceNamespaceException;
+import org.lance.namespace.errors.InvalidInputException;
+import org.lance.namespace.errors.LanceNamespaceException;
 import org.lance.namespace.model.CreateEmptyTableRequest;
 import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeregisterTableRequest;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
 import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 import org.lance.namespace.model.DropNamespaceRequest;
-import org.lance.namespace.model.DropTableRequest;
 import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
@@ -119,7 +120,8 @@ public class TestUnityNamespaceIntegration {
         createConn.setRequestProperty("Content-Type", "application/json");
         createConn.setDoOutput(true);
 
-        String body = String.format("{\"name\": \"%s\", \"comment\": \"Test catalog\"}", TEST_CATALOG);
+        String body =
+            String.format("{\"name\": \"%s\", \"comment\": \"Test catalog\"}", TEST_CATALOG);
         createConn.getOutputStream().write(body.getBytes());
 
         int createResponse = createConn.getResponseCode();
@@ -160,7 +162,7 @@ public class TestUnityNamespaceIntegration {
       // Clean up test schema
       DropNamespaceRequest dropRequest = new DropNamespaceRequest();
       dropRequest.setId(Arrays.asList(TEST_CATALOG, testSchema));
-      dropRequest.setBehavior(DropNamespaceRequest.BehaviorEnum.CASCADE);
+      dropRequest.setBehavior("Restrict");
       namespace.dropNamespace(dropRequest);
     } catch (Exception e) {
       // Ignore cleanup errors
@@ -231,7 +233,8 @@ public class TestUnityNamespaceIntegration {
     nsRequest.setId(Arrays.asList(TEST_CATALOG, testSchema));
     namespace.createNamespace(nsRequest);
 
-    String tableName = "test_table_" + UUID.randomUUID().toString().substring(0, 8).replace("-", "");
+    String tableName =
+        "test_table_" + UUID.randomUUID().toString().substring(0, 8).replace("-", "");
 
     // Create empty table
     CreateEmptyTableRequest createRequest = new CreateEmptyTableRequest();
@@ -247,7 +250,6 @@ public class TestUnityNamespaceIntegration {
 
     DescribeTableResponse describeResponse = namespace.describeTable(describeRequest);
     assertThat(describeResponse.getLocation()).contains(tableName);
-    assertThat(describeResponse.getProperties()).containsEntry("table_type", "lance");
 
     // List tables
     ListTablesRequest listRequest = new ListTablesRequest();
@@ -256,10 +258,10 @@ public class TestUnityNamespaceIntegration {
     ListTablesResponse listResponse = namespace.listTables(listRequest);
     assertThat(listResponse.getTables()).contains(tableName);
 
-    // Drop table
-    DropTableRequest dropRequest = new DropTableRequest();
-    dropRequest.setId(Arrays.asList(TEST_CATALOG, testSchema, tableName));
-    namespace.dropTable(dropRequest);
+    // Deregister table
+    DeregisterTableRequest deregisterRequest = new DeregisterTableRequest();
+    deregisterRequest.setId(Arrays.asList(TEST_CATALOG, testSchema, tableName));
+    namespace.deregisterTable(deregisterRequest);
 
     // Verify table doesn't exist
     assertThatThrownBy(() -> namespace.describeTable(describeRequest))
@@ -267,29 +269,14 @@ public class TestUnityNamespaceIntegration {
   }
 
   @Test
-  public void testCascadeDropSchema() {
-    // Create schema
-    CreateNamespaceRequest nsRequest = new CreateNamespaceRequest();
-    nsRequest.setId(Arrays.asList(TEST_CATALOG, testSchema));
-    namespace.createNamespace(nsRequest);
-
-    // Create a table in the schema
-    String tableName = "cascade_test_table";
-    CreateEmptyTableRequest tableRequest = new CreateEmptyTableRequest();
-    tableRequest.setId(Arrays.asList(TEST_CATALOG, testSchema, tableName));
-    tableRequest.setLocation("/tmp/lance-integration-test/" + testSchema + "/" + tableName);
-    namespace.createEmptyTable(tableRequest);
-
-    // Drop schema with cascade
+  public void testCascadeDropSchemaRejected() {
+    // Drop schema with cascade - should be rejected
     DropNamespaceRequest dropRequest = new DropNamespaceRequest();
     dropRequest.setId(Arrays.asList(TEST_CATALOG, testSchema));
-    dropRequest.setBehavior(DropNamespaceRequest.BehaviorEnum.CASCADE);
-    namespace.dropNamespace(dropRequest);
+    dropRequest.setBehavior("Cascade");
 
-    // Verify schema doesn't exist
-    DescribeNamespaceRequest describeRequest = new DescribeNamespaceRequest();
-    describeRequest.setId(Arrays.asList(TEST_CATALOG, testSchema));
-    assertThatThrownBy(() -> namespace.describeNamespace(describeRequest))
-        .isInstanceOf(LanceNamespaceException.class);
+    assertThatThrownBy(() -> namespace.dropNamespace(dropRequest))
+        .isInstanceOf(InvalidInputException.class)
+        .hasMessageContaining("Cascade behavior is not supported");
   }
 }

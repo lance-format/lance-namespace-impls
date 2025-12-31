@@ -13,38 +13,33 @@
  */
 package org.lance.namespace.hive2;
 
-import com.lancedb.lance.Dataset;
-import com.lancedb.lance.WriteParams;
-import org.lance.namespace.Configurable;
+import org.lance.Dataset;
+import org.lance.WriteParams;
 import org.lance.namespace.LanceNamespace;
-import org.lance.namespace.LanceNamespaceException;
-import org.lance.namespace.ObjectIdentifier;
+import org.lance.namespace.errors.InvalidInputException;
+import org.lance.namespace.errors.NamespaceAlreadyExistsException;
+import org.lance.namespace.errors.NamespaceNotFoundException;
+import org.lance.namespace.errors.ServiceUnavailableException;
+import org.lance.namespace.errors.TableAlreadyExistsException;
+import org.lance.namespace.errors.TableNotFoundException;
 import org.lance.namespace.model.CreateEmptyTableRequest;
 import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
-import org.lance.namespace.model.CreateTableRequest;
-import org.lance.namespace.model.CreateTableResponse;
+import org.lance.namespace.model.DeregisterTableRequest;
+import org.lance.namespace.model.DeregisterTableResponse;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
 import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 import org.lance.namespace.model.DropNamespaceRequest;
 import org.lance.namespace.model.DropNamespaceResponse;
-import org.lance.namespace.model.DropTableRequest;
-import org.lance.namespace.model.DropTableResponse;
-import org.lance.namespace.model.JsonArrowSchema;
 import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
 import org.lance.namespace.model.NamespaceExistsRequest;
 import org.lance.namespace.model.TableExistsRequest;
-import org.lance.namespace.util.ArrowIpcUtil;
-import org.lance.namespace.util.CommonUtil;
-import org.lance.namespace.util.JsonArrowSchemaConverter;
-import org.lance.namespace.util.PageUtil;
-import org.lance.namespace.util.ValidationUtil;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -60,7 +55,6 @@ import org.apache.thrift.TException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -73,7 +67,7 @@ import static org.lance.namespace.hive2.Hive2ErrorType.HiveMetaStoreError;
 import static org.lance.namespace.hive2.Hive2ErrorType.TableAlreadyExists;
 import static org.lance.namespace.hive2.Hive2ErrorType.TableNotFound;
 
-public class Hive2Namespace implements LanceNamespace, Configurable<Configuration> {
+public class Hive2Namespace implements LanceNamespace {
   private static final Logger LOG = LoggerFactory.getLogger(Hive2Namespace.class);
 
   private Hive2ClientPool clientPool;
@@ -82,6 +76,16 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
   private Hive2NamespaceConfig config;
 
   public Hive2Namespace() {}
+
+  /**
+   * Set the Hadoop configuration. Must be called before initialize() if a custom configuration is
+   * needed (e.g., for connecting to a specific Hive Metastore).
+   *
+   * @param conf The Hadoop configuration to use
+   */
+  public void setHadoopConf(Configuration conf) {
+    this.hadoopConf = conf;
+  }
 
   @Override
   public void initialize(Map<String, String> configProperties, BufferAllocator allocator) {
@@ -125,7 +129,7 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
   @Override
   public CreateNamespaceResponse createNamespace(CreateNamespaceRequest request) {
     ObjectIdentifier id = ObjectIdentifier.of(request.getId());
-    CreateNamespaceRequest.ModeEnum mode = request.getMode();
+    String mode = request.getMode() != null ? request.getMode().toLowerCase() : "create";
     Map<String, String> properties = request.getProperties();
 
     ValidationUtil.checkArgument(
@@ -149,11 +153,10 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
     Database database = Hive2Util.getDatabaseOrNull(clientPool, db);
 
     if (database == null) {
-      throw LanceNamespaceException.notFound(
+      throw new NamespaceNotFoundException(
           String.format("Namespace does not exist: %s", id.stringStyleId()),
           HiveMetaStoreError.getType(),
-          id.stringStyleId(),
-          CommonUtil.formatCurrentStackTrace());
+          id.stringStyleId());
     }
   }
 
@@ -168,11 +171,10 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
     Database database = Hive2Util.getDatabaseOrNull(clientPool, db);
 
     if (database == null) {
-      throw LanceNamespaceException.notFound(
+      throw new NamespaceNotFoundException(
           String.format("Namespace does not exist: %s", id.stringStyleId()),
           HiveMetaStoreError.getType(),
-          id.stringStyleId(),
-          CommonUtil.formatCurrentStackTrace());
+          id.stringStyleId());
     }
 
     DescribeNamespaceResponse response = new DescribeNamespaceResponse();
@@ -201,19 +203,16 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
 
   @Override
   public DropNamespaceResponse dropNamespace(DropNamespaceRequest request) {
+    if ("Cascade".equalsIgnoreCase(request.getBehavior())) {
+      throw new InvalidInputException("Cascade behavior is not supported for this implementation");
+    }
+
     ObjectIdentifier id = ObjectIdentifier.of(request.getId());
-    DropNamespaceRequest.ModeEnum mode = request.getMode();
-    DropNamespaceRequest.BehaviorEnum behavior = request.getBehavior();
+    String mode = request.getMode() != null ? request.getMode().toLowerCase() : "fail";
+    String behavior = request.getBehavior() != null ? request.getBehavior() : "Restrict";
 
     ValidationUtil.checkArgument(
         !id.isRoot() && id.levels() <= 1, "Expect a 1-level namespace but get %s", id);
-
-    if (mode == null) {
-      mode = DropNamespaceRequest.ModeEnum.FAIL;
-    }
-    if (behavior == null) {
-      behavior = DropNamespaceRequest.BehaviorEnum.RESTRICT;
-    }
 
     Map<String, String> properties = doDropNamespace(id, mode, behavior);
 
@@ -256,11 +255,10 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
     Optional<Table> hmsTable = Hive2Util.getTable(clientPool, db, table);
 
     if (!hmsTable.isPresent()) {
-      throw LanceNamespaceException.notFound(
+      throw new TableNotFoundException(
           String.format("Table does not exist: %s", tableId.stringStyleId()),
           TableNotFound.getType(),
-          tableId.stringStyleId(),
-          CommonUtil.formatCurrentStackTrace());
+          tableId.stringStyleId());
     }
 
     Hive2Util.validateLanceTable(hmsTable.get());
@@ -268,6 +266,11 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
 
   @Override
   public DescribeTableResponse describeTable(DescribeTableRequest request) {
+    if (Boolean.TRUE.equals(request.getLoadDetailedMetadata())) {
+      throw new InvalidInputException(
+          "load_detailed_metadata=true is not supported for this implementation");
+    }
+
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
 
     ValidationUtil.checkArgument(
@@ -276,11 +279,10 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
     Optional<String> location = doDescribeTable(tableId);
 
     if (!location.isPresent()) {
-      throw LanceNamespaceException.notFound(
+      throw new TableNotFoundException(
           String.format("Table does not exist: %s", tableId.stringStyleId()),
           TableNotFound.getType(),
-          tableId.stringStyleId(),
-          CommonUtil.formatCurrentStackTrace());
+          tableId.stringStyleId());
     }
 
     DescribeTableResponse response = new DescribeTableResponse();
@@ -289,45 +291,7 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
     return response;
   }
 
-  @Override
-  public CreateTableResponse createTable(CreateTableRequest request, byte[] requestData) {
-    // Validate that requestData is a valid Arrow IPC stream
-    ValidationUtil.checkNotNull(
-        requestData, "Request data (Arrow IPC stream) is required for createTable");
-    ValidationUtil.checkArgument(
-        requestData.length > 0, "Request data (Arrow IPC stream) cannot be empty");
-
-    ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
-
-    // Extract schema from Arrow IPC stream
-    JsonArrowSchema jsonSchema;
-    try {
-      jsonSchema = ArrowIpcUtil.extractSchemaFromIpc(requestData);
-    } catch (IOException e) {
-      throw LanceNamespaceException.badRequest(
-          "Invalid Arrow IPC stream: " + e.getMessage(),
-          "INVALID_ARROW_IPC",
-          tableId.stringStyleId(),
-          "Failed to extract schema from Arrow IPC stream");
-    }
-    Schema schema = JsonArrowSchemaConverter.convertToArrowSchema(jsonSchema);
-
-    ValidationUtil.checkArgument(
-        tableId.levels() == 2, "Expect 2-level table identifier but get %s", tableId);
-
-    String location = request.getLocation();
-    if (location == null || location.isEmpty()) {
-      location = getDefaultTableLocation(tableId.levelAtListPos(0), tableId.levelAtListPos(1));
-    }
-
-    doCreateTable(tableId, schema, location, request.getProperties(), requestData);
-
-    CreateTableResponse response = new CreateTableResponse();
-    response.setLocation(location);
-    response.setVersion(1L);
-    response.setStorageOptions(config.getStorageOptions());
-    return response;
-  }
+  // Removed: createTable(CreateTableRequest, byte[]) - using default implementation from interface
 
   @Override
   public CreateEmptyTableResponse createEmptyTable(CreateEmptyTableRequest request) {
@@ -342,7 +306,7 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
     }
 
     // Create table in metastore without data (pass null for requestData)
-    doCreateTable(tableId, null, location, request.getProperties(), null);
+    doCreateTable(tableId, null, location, null, null);
 
     CreateEmptyTableResponse response = new CreateEmptyTableResponse();
     response.setLocation(location);
@@ -351,22 +315,20 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
   }
 
   @Override
-  public DropTableResponse dropTable(DropTableRequest request) {
+  public DeregisterTableResponse deregisterTable(DeregisterTableRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
 
     ValidationUtil.checkArgument(
         tableId.levels() == 2, "Expect 2-level table identifier but get %s", tableId);
 
     String location = doDropTable(tableId);
-    // TODO: remove data
 
-    DropTableResponse response = new DropTableResponse();
-    response.setLocation(location);
+    DeregisterTableResponse response = new DeregisterTableResponse();
     response.setId(request.getId());
+    response.setLocation(location);
     return response;
   }
 
-  @Override
   public void setConf(Configuration conf) {
     this.hadoopConf = conf;
   }
@@ -383,16 +345,13 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
         Thread.currentThread().interrupt();
       }
       String errorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-      throw LanceNamespaceException.serviceUnavailable(
-          "Failed to list namespaces: " + errorMessage,
-          HiveMetaStoreError.getType(),
-          "",
-          CommonUtil.formatCurrentStackTrace());
+      throw new ServiceUnavailableException(
+          "Failed to list namespaces: " + errorMessage, HiveMetaStoreError.getType(), "");
     }
   }
 
   protected void doCreateNamespace(
-      ObjectIdentifier id, CreateNamespaceRequest.ModeEnum mode, Map<String, String> properties) {
+      ObjectIdentifier id, String mode, Map<String, String> properties) {
 
     try {
       String db = id.levelAtListPos(0).toLowerCase();
@@ -402,34 +361,26 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
         Thread.currentThread().interrupt();
       }
       String errorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-      throw LanceNamespaceException.serviceUnavailable(
-          "Failed to create namespace: " + errorMessage,
-          HiveMetaStoreError.getType(),
-          "",
-          CommonUtil.formatCurrentStackTrace());
+      throw new ServiceUnavailableException(
+          "Failed to create namespace: " + errorMessage, HiveMetaStoreError.getType(), "");
     }
   }
 
-  private void createDatabase(
-      String dbName, CreateNamespaceRequest.ModeEnum mode, Map<String, String> properties)
+  private void createDatabase(String dbName, String mode, Map<String, String> properties)
       throws TException, InterruptedException {
     Database oldDb = Hive2Util.getDatabaseOrNull(clientPool, dbName);
     if (oldDb != null) {
-      switch (mode) {
-        case CREATE:
-          throw LanceNamespaceException.conflict(
-              String.format("Database %s already exist", dbName),
-              DatabaseAlreadyExist.getType(),
-              "",
-              CommonUtil.formatCurrentStackTrace());
-        case EXIST_OK:
-          return;
-        case OVERWRITE:
-          clientPool.run(
-              client -> {
-                client.dropDatabase(dbName, false, true, false);
-                return null;
-              });
+      if ("create".equals(mode)) {
+        throw new NamespaceAlreadyExistsException(
+            String.format("Database %s already exist", dbName), DatabaseAlreadyExist.getType(), "");
+      } else if ("exist_ok".equals(mode) || "existok".equals(mode)) {
+        return;
+      } else if ("overwrite".equals(mode)) {
+        clientPool.run(
+            client -> {
+              client.dropDatabase(dbName, false, true, false);
+              return null;
+            });
       }
     }
 
@@ -491,11 +442,10 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
     try {
       Optional<Table> existing = Hive2Util.getTable(clientPool, db, tableName);
       if (existing.isPresent()) {
-        throw LanceNamespaceException.conflict(
+        throw new TableAlreadyExistsException(
             String.format("Table %s.%s already exists", db, tableName),
             TableAlreadyExists.getType(),
-            String.format("%s.%s", db, tableName),
-            CommonUtil.formatCurrentStackTrace());
+            String.format("%s.%s", db, tableName));
       }
 
       Table table = new Table();
@@ -537,11 +487,8 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
         Thread.currentThread().interrupt();
       }
       String errorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-      throw LanceNamespaceException.serviceUnavailable(
-          "Failed to create table: " + errorMessage,
-          HiveMetaStoreError.getType(),
-          "",
-          CommonUtil.formatCurrentStackTrace());
+      throw new ServiceUnavailableException(
+          "Failed to create table: " + errorMessage, HiveMetaStoreError.getType(), "");
     }
   }
 
@@ -550,11 +497,8 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
       // First validate that database exists
       Database database = Hive2Util.getDatabaseOrNull(clientPool, db);
       if (database == null) {
-        throw LanceNamespaceException.notFound(
-            String.format("Database %s doesn't exist", db),
-            HiveMetaStoreError.getType(),
-            db,
-            CommonUtil.formatCurrentStackTrace());
+        throw new NamespaceNotFoundException(
+            String.format("Database %s doesn't exist", db), HiveMetaStoreError.getType(), db);
       }
 
       List<String> allTables = clientPool.run(client -> client.getAllTables(db));
@@ -581,11 +525,8 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
         Thread.currentThread().interrupt();
       }
       String errorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-      throw LanceNamespaceException.serviceUnavailable(
-          "Failed to list tables: " + errorMessage,
-          HiveMetaStoreError.getType(),
-          "",
-          CommonUtil.formatCurrentStackTrace());
+      throw new ServiceUnavailableException(
+          "Failed to list tables: " + errorMessage, HiveMetaStoreError.getType(), "");
     }
   }
 
@@ -596,11 +537,10 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
     try {
       Optional<Table> hmsTable = Hive2Util.getTable(clientPool, db, tableName);
       if (!hmsTable.isPresent()) {
-        throw LanceNamespaceException.notFound(
+        throw new TableNotFoundException(
             String.format("Table %s.%s does not exist", db, tableName),
             TableNotFound.getType(),
-            String.format("%s.%s", db, tableName),
-            CommonUtil.formatCurrentStackTrace());
+            String.format("%s.%s", db, tableName));
       }
 
       Hive2Util.validateLanceTable(hmsTable.get());
@@ -618,63 +558,35 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
         Thread.currentThread().interrupt();
       }
       String errorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-      throw LanceNamespaceException.serviceUnavailable(
-          "Failed to drop table: " + errorMessage,
-          HiveMetaStoreError.getType(),
-          "",
-          CommonUtil.formatCurrentStackTrace());
+      throw new ServiceUnavailableException(
+          "Failed to drop table: " + errorMessage, HiveMetaStoreError.getType(), "");
     }
   }
 
-  protected Map<String, String> doDropNamespace(
-      ObjectIdentifier id,
-      DropNamespaceRequest.ModeEnum mode,
-      DropNamespaceRequest.BehaviorEnum behavior) {
+  protected Map<String, String> doDropNamespace(ObjectIdentifier id, String mode, String behavior) {
     String db = id.levelAtListPos(0).toLowerCase();
 
     try {
       Database database = Hive2Util.getDatabaseOrNull(clientPool, db);
       if (database == null) {
-        if (mode == DropNamespaceRequest.ModeEnum.SKIP) {
-          // Return empty properties for SKIP mode when namespace doesn't exist
+        if ("skip".equals(mode)) {
           return new HashMap<>();
         } else {
-          throw LanceNamespaceException.notFound(
-              String.format("Database %s doesn't exist", db),
-              HiveMetaStoreError.getType(),
-              db,
-              CommonUtil.formatCurrentStackTrace());
+          throw new NamespaceNotFoundException(
+              String.format("Database %s doesn't exist", db), HiveMetaStoreError.getType(), db);
         }
       }
 
-      // Check if database contains tables
-      List<String> tables = doListTables(db);
-      if (!tables.isEmpty()) {
-        if (behavior == DropNamespaceRequest.BehaviorEnum.RESTRICT) {
-          throw LanceNamespaceException.badRequest(
+      // Check if database contains tables (RESTRICT behavior only, not for Cascade)
+      boolean cascade = "Cascade".equalsIgnoreCase(behavior);
+      if (!cascade) {
+        List<String> tables = doListTables(db);
+        if (!tables.isEmpty()) {
+          throw new InvalidInputException(
               String.format(
                   "Database %s is not empty. Contains %d tables: %s", db, tables.size(), tables),
               HiveMetaStoreError.getType(),
-              db,
-              CommonUtil.formatCurrentStackTrace());
-        } else if (behavior == DropNamespaceRequest.BehaviorEnum.CASCADE) {
-          // Drop all tables first
-          for (String tableName : tables) {
-            try {
-              ObjectIdentifier tableId = ObjectIdentifier.of(Lists.newArrayList(db, tableName));
-              doDropTable(tableId);
-              LOG.info("Dropped table {}.{} during CASCADE operation", db, tableName);
-            } catch (Exception e) {
-              LOG.warn("Failed to drop table {}.{}: {}", db, tableName, e.getMessage());
-              throw LanceNamespaceException.serviceUnavailable(
-                  String.format(
-                      "Failed to drop table %s.%s during CASCADE operation: %s",
-                      db, tableName, e.getMessage()),
-                  HiveMetaStoreError.getType(),
-                  String.format("%s.%s", db, tableName),
-                  CommonUtil.formatCurrentStackTrace());
-            }
-          }
+              db);
         }
       }
 
@@ -697,9 +609,10 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
       }
 
       // Drop the database
+      final boolean cascadeDrop = cascade;
       clientPool.run(
           client -> {
-            client.dropDatabase(db, false, true, false);
+            client.dropDatabase(db, false, true, cascadeDrop);
             return null;
           });
 
@@ -710,11 +623,8 @@ public class Hive2Namespace implements LanceNamespace, Configurable<Configuratio
         Thread.currentThread().interrupt();
       }
       String errorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-      throw LanceNamespaceException.serviceUnavailable(
-          "Failed to drop namespace: " + errorMessage,
-          HiveMetaStoreError.getType(),
-          db,
-          CommonUtil.formatCurrentStackTrace());
+      throw new ServiceUnavailableException(
+          "Failed to drop namespace: " + errorMessage, HiveMetaStoreError.getType(), db);
     }
   }
 

@@ -20,7 +20,6 @@ public class IcebergNamespaceConfig {
 
   public static final String ENDPOINT = "endpoint";
   public static final String WAREHOUSE = "warehouse";
-  public static final String PREFIX = "prefix";
   public static final String AUTH_TOKEN = "auth_token";
   public static final String CREDENTIAL = "credential";
   public static final String CONNECT_TIMEOUT = "connect_timeout";
@@ -30,7 +29,6 @@ public class IcebergNamespaceConfig {
 
   private final String endpoint;
   private final String warehouse;
-  private final String prefix;
   private final String authToken;
   private final String credential;
   private final int connectTimeout;
@@ -45,7 +43,6 @@ public class IcebergNamespaceConfig {
     }
 
     this.warehouse = properties.get(WAREHOUSE);
-    this.prefix = properties.getOrDefault(PREFIX, "");
     this.authToken = properties.get(AUTH_TOKEN);
     this.credential = properties.get(CREDENTIAL);
     this.connectTimeout = Integer.parseInt(properties.getOrDefault(CONNECT_TIMEOUT, "10000"));
@@ -60,10 +57,6 @@ public class IcebergNamespaceConfig {
 
   public String getWarehouse() {
     return warehouse;
-  }
-
-  public String getPrefix() {
-    return prefix;
   }
 
   public String getAuthToken() {
@@ -90,11 +83,7 @@ public class IcebergNamespaceConfig {
     return root;
   }
 
-  public String getFullApiUrl() {
-    String base = endpoint.endsWith("/") ? endpoint.substring(0, endpoint.length() - 1) : endpoint;
-    if (prefix != null && !prefix.isEmpty()) {
-      return base + "/" + prefix;
-    }
-    return base;
+  public String getBaseApiUrl() {
+    return endpoint.endsWith("/") ? endpoint.substring(0, endpoint.length() - 1) : endpoint;
   }
 }

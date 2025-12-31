@@ -18,7 +18,7 @@ POSTGRES_DRIVER_VERSION := 42.7.3
 POSTGRES_DRIVER_URL := https://jdbc.postgresql.org/download/postgresql-$(POSTGRES_DRIVER_VERSION).jar
 
 .PHONY: setup up down down-clean logs status health
-.PHONY: up-hive2 down-hive2 up-hive3 down-hive3 up-polaris down-polaris up-unity down-unity
+.PHONY: up-hive2 down-hive2 up-hive3 down-hive3 up-polaris down-polaris up-unity down-unity up-iceberg down-iceberg
 
 # Download PostgreSQL JDBC driver for Hive
 setup:
@@ -60,6 +60,9 @@ health:
 	@echo ""
 	@echo "=== Unity Catalog (port 8080) ==="
 	@curl -sf http://localhost:8080/api/2.1/unity-catalog/catalogs > /dev/null && echo "OK" || echo "NOT READY"
+	@echo ""
+	@echo "=== Iceberg REST Catalog (port 8282) ==="
+	@curl -sf http://localhost:8282/health > /dev/null && echo "OK" || echo "NOT READY"
 
 # ============================================================================
 # Individual service management
@@ -116,6 +119,19 @@ down-unity-clean:
 
 logs-unity:
 	docker compose -f unity/docker-compose.yml logs -f
+
+# Iceberg REST Catalog (Lakekeeper)
+up-iceberg:
+	docker compose -f iceberg/docker-compose.yml up -d
+
+down-iceberg:
+	docker compose -f iceberg/docker-compose.yml down
+
+down-iceberg-clean:
+	docker compose -f iceberg/docker-compose.yml down -v
+
+logs-iceberg:
+	docker compose -f iceberg/docker-compose.yml logs -f
 
 # ============================================================================
 # Test utilities

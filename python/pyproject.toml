@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 
 dependencies = [
     "pylance>=0.26.0",
-    "lance-namespace-urllib3-client>=0.0.21",
+    "lance-namespace-urllib3-client>=0.4.2",
     "pyarrow>=15.0.0",
     "typing-extensions>=4.5.0",
 ]
@@ -26,6 +26,12 @@ hive2 = [
     "thrift>=0.13.0",
     "hive-metastore-client>=1.0.0",
 ]
+hive3 = [
+    "thrift>=0.13.0",
+    "hive-metastore-client>=1.0.0",
+]
+iceberg = []
+polaris = []
 unity = []
 all = [
     "boto3>=1.35.0",
@@ -36,6 +42,12 @@ all = [
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+    "ruff>=0.4.0",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -10,12 +10,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Python
+name: Java Hive2
 
 on:
   push:
     branches:
       - main
+    paths:
+      - java/lance-namespace-hive2/**
+      - java/pom.xml
+      - .github/workflows/java-hive2.yml
   pull_request:
     types:
       - opened
@@ -23,36 +27,36 @@ on:
       - ready_for_review
       - reopened
     paths:
-      - python/**
-      - .github/workflows/python.yml
+      - java/lance-namespace-hive2/**
+      - java/pom.xml
+      - .github/workflows/java-hive2.yml
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  linux-build:
+  test:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       matrix:
-        python-version: [ "3.10", "3.11", "3.12" ]
+        java-version: [11, 17]
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Java
+        uses: actions/setup-java@v4
         with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-      - name: Install dependencies and run tests
-        working-directory: python
-        run: |
-          uv sync
-          uv run pytest
-      - name: Check code style
-        working-directory: python
-        run: |
-          uv run ruff check .
-          uv run ruff format --check .
+          distribution: temurin
+          java-version: ${{ matrix.java-version }}
+          cache: "maven"
+      - name: Lint
+        working-directory: java
+        run: make lint-hive2
+      - name: Build
+        working-directory: java
+        run: make build-hive2
+      - name: Test
+        working-directory: java
+        run: make test-hive2

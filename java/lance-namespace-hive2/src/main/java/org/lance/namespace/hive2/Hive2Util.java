@@ -13,8 +13,8 @@
  */
 package org.lance.namespace.hive2;
 
-import org.lance.namespace.LanceNamespaceException;
-import org.lance.namespace.util.CommonUtil;
+import org.lance.namespace.errors.InvalidInputException;
+import org.lance.namespace.errors.ServiceUnavailableException;
 
 import com.google.common.collect.Maps;
 import org.apache.hadoop.hive.metastore.api.Database;
@@ -44,8 +44,7 @@ public class Hive2Util {
       if (e instanceof InterruptedException) {
         Thread.currentThread().interrupt();
       }
-      throw LanceNamespaceException.serviceUnavailable(
-          e.getMessage(), HiveMetaStoreError.getType(), "", CommonUtil.formatCurrentStackTrace());
+      throw new ServiceUnavailableException(e.getMessage(), HiveMetaStoreError.getType(), "");
     }
   }
 
@@ -103,20 +102,18 @@ public class Hive2Util {
       if (e instanceof InterruptedException) {
         Thread.currentThread().interrupt();
       }
-      throw LanceNamespaceException.serviceUnavailable(
-          e.getMessage(), HiveMetaStoreError.getType(), "", CommonUtil.formatCurrentStackTrace());
+      throw new ServiceUnavailableException(e.getMessage(), HiveMetaStoreError.getType(), "");
     }
   }
 
   public static void validateLanceTable(Table table) {
     Map<String, String> params = table.getParameters();
     if (params == null || !"lance".equalsIgnoreCase(params.get("table_type"))) {
-      throw LanceNamespaceException.badRequest(
+      throw new InvalidInputException(
           String.format(
               "Table %s.%s is not a Lance table", table.getDbName(), table.getTableName()),
           InvalidLanceTable.getType(),
-          String.format("%s.%s", table.getDbName(), table.getTableName()),
-          CommonUtil.formatCurrentStackTrace());
+          String.format("%s.%s", table.getDbName(), table.getTableName()));
     }
   }
 

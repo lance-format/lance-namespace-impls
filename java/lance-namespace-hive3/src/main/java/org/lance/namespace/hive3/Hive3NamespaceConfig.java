@@ -13,9 +13,7 @@
  */
 package org.lance.namespace.hive3;
 
-import org.lance.namespace.util.OpenDalUtil;
-import org.lance.namespace.util.PropertyUtil;
-
+import java.util.HashMap;
 import java.util.Map;
 
 public class Hive3NamespaceConfig {
@@ -42,12 +40,27 @@ public class Hive3NamespaceConfig {
   private final String root;
 
   public Hive3NamespaceConfig(Map<String, String> properties) {
+    // Inline PropertyUtil.propertyAsInt
+    String clientPoolSizeStr = properties.get(CLIENT_POOL_SIZE);
     this.clientPoolSize =
-        PropertyUtil.propertyAsInt(properties, CLIENT_POOL_SIZE, CLIENT_POOL_SIZE_DEFAULT);
-    this.storageOptions = PropertyUtil.propertiesWithPrefix(properties, STORAGE_OPTIONS_PREFIX);
+        clientPoolSizeStr != null ? Integer.parseInt(clientPoolSizeStr) : CLIENT_POOL_SIZE_DEFAULT;
+
+    // Inline PropertyUtil.propertiesWithPrefix
+    Map<String, String> filteredStorageOptions = new HashMap<>();
+    for (Map.Entry<String, String> entry : properties.entrySet()) {
+      if (entry.getKey().startsWith(STORAGE_OPTIONS_PREFIX)) {
+        filteredStorageOptions.put(
+            entry.getKey().substring(STORAGE_OPTIONS_PREFIX.length()), entry.getValue());
+      }
+    }
+    this.storageOptions = filteredStorageOptions;
+
+    // Inline PropertyUtil.propertyAsString and OpenDalUtil.stripTrailingSlash
+    String rootValue = properties.getOrDefault(ROOT, ROOT_DEFAULT);
     this.root =
-        OpenDalUtil.stripTrailingSlash(
-            PropertyUtil.propertyAsString(properties, ROOT, ROOT_DEFAULT));
+        rootValue != null && rootValue.endsWith("/")
+            ? rootValue.substring(0, rootValue.length() - 1)
+            : rootValue;
   }
 
   public int getClientPoolSize() {

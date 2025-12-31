@@ -13,8 +13,7 @@
  */
 package org.lance.namespace.unity;
 
-import org.lance.namespace.util.PropertyUtil;
-
+import java.util.HashMap;
 import java.util.Map;
 
 /** Configuration for Unity Catalog namespace. */
@@ -46,22 +45,40 @@ public class UnityNamespaceConfig {
 
   public UnityNamespaceConfig(Map<String, String> properties) {
     this.properties = properties;
-    this.endpoint = PropertyUtil.propertyAsString(properties, ENDPOINT, null);
+    this.endpoint = properties.get(ENDPOINT);
     if (endpoint == null) {
       throw new IllegalArgumentException("Unity endpoint is required");
     }
-    this.apiPath = PropertyUtil.propertyAsString(properties, API_PATH, DEFAULT_API_PATH);
-    this.authToken = PropertyUtil.propertyAsString(properties, AUTH_TOKEN, null);
-    this.catalog = PropertyUtil.propertyAsString(properties, CATALOG, null);
+    this.apiPath = properties.getOrDefault(API_PATH, DEFAULT_API_PATH);
+    this.authToken = properties.get(AUTH_TOKEN);
+    this.catalog = properties.get(CATALOG);
     if (catalog == null) {
       throw new IllegalArgumentException("Unity catalog is required");
     }
+
+    // Inline PropertyUtil.propertyAsInt
+    String connectTimeoutStr = properties.get(CONNECT_TIMEOUT);
     this.connectTimeout =
-        PropertyUtil.propertyAsInt(properties, CONNECT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT);
-    this.readTimeout = PropertyUtil.propertyAsInt(properties, READ_TIMEOUT, DEFAULT_READ_TIMEOUT);
-    this.maxRetries = PropertyUtil.propertyAsInt(properties, MAX_RETRIES, DEFAULT_MAX_RETRIES);
-    this.root = PropertyUtil.propertyAsString(properties, ROOT, System.getProperty("user.dir"));
-    this.storageProperties = PropertyUtil.propertiesWithPrefix(properties, "storage.");
+        connectTimeoutStr != null ? Integer.parseInt(connectTimeoutStr) : DEFAULT_CONNECT_TIMEOUT;
+
+    String readTimeoutStr = properties.get(READ_TIMEOUT);
+    this.readTimeout =
+        readTimeoutStr != null ? Integer.parseInt(readTimeoutStr) : DEFAULT_READ_TIMEOUT;
+
+    String maxRetriesStr = properties.get(MAX_RETRIES);
+    this.maxRetries = maxRetriesStr != null ? Integer.parseInt(maxRetriesStr) : DEFAULT_MAX_RETRIES;
+
+    this.root = properties.getOrDefault(ROOT, System.getProperty("user.dir"));
+
+    // Inline PropertyUtil.propertiesWithPrefix
+    Map<String, String> filteredStorageProperties = new HashMap<>();
+    for (Map.Entry<String, String> entry : properties.entrySet()) {
+      if (entry.getKey().startsWith("storage.")) {
+        filteredStorageProperties.put(
+            entry.getKey().substring("storage.".length()), entry.getValue());
+      }
+    }
+    this.storageProperties = filteredStorageProperties;
   }
 
   public String getEndpoint() {
