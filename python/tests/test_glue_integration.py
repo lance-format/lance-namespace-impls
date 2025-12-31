@@ -3,23 +3,27 @@ Integration tests for AWS Glue namespace implementation.
 
 To run these tests locally:
   1. Configure AWS credentials (via environment variables, ~/.aws/credentials, or IAM role)
-  2. Run: make integ-test-glue
+  2. Set AWS_S3_BUCKET_NAME environment variable
+  3. Run: make integ-test-glue
 
 Tests are automatically skipped if AWS credentials are not available.
 """
 
 import os
-import tempfile
 import uuid
 import unittest
 
 import pytest
 
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+AWS_S3_BUCKET_NAME = os.environ.get("AWS_S3_BUCKET_NAME")
 
 
 def check_aws_credentials_available():
-    """Check if AWS credentials are available."""
+    """Check if AWS credentials and S3 bucket are available."""
+    if not AWS_S3_BUCKET_NAME:
+        return False
+
     if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
         return True
 
@@ -46,13 +50,13 @@ class TestGlueNamespaceIntegration(unittest.TestCase):
         """Set up class-level resources."""
         from lance_namespace_impls.glue import GlueNamespace
 
-        cls.temp_dir = tempfile.mkdtemp(prefix="lance_glue_test_")
         cls.unique_id = uuid.uuid4().hex[:8]
         cls.test_database = f"lance_test_db_{cls.unique_id}"
+        cls.s3_root = f"s3://{AWS_S3_BUCKET_NAME}/lance_glue_test_{cls.unique_id}"
 
         properties = {
             "region": AWS_REGION,
-            "root": cls.temp_dir,
+            "root": cls.s3_root,
         }
 
         cls.namespace = GlueNamespace(**properties)
@@ -65,11 +69,6 @@ class TestGlueNamespaceIntegration(unittest.TestCase):
                 cls._cleanup_database(cls.test_database)
             except Exception:
                 pass
-
-        import shutil
-
-        if hasattr(cls, "temp_dir") and os.path.exists(cls.temp_dir):
-            shutil.rmtree(cls.temp_dir, ignore_errors=True)
 
     @classmethod
     def _cleanup_database(cls, database_name):
@@ -173,7 +172,7 @@ class TestGlueNamespaceIntegration(unittest.TestCase):
 
         db_name = self._create_test_database()
         table_name = f"test_table_{uuid.uuid4().hex[:8]}"
-        table_location = os.path.join(self.temp_dir, db_name, f"{table_name}.lance")
+        table_location = f"{self.s3_root}/{db_name}/{table_name}.lance"
 
         # Create empty table (DeclareTable)
         create_request = CreateEmptyTableRequest()
@@ -213,7 +212,7 @@ class TestGlueNamespaceIntegration(unittest.TestCase):
         table_names = [f"table_{i}_{uuid.uuid4().hex[:6]}" for i in range(3)]
 
         for table_name in table_names:
-            table_location = os.path.join(self.temp_dir, db_name, f"{table_name}.lance")
+            table_location = f"{self.s3_root}/{db_name}/{table_name}.lance"
             create_request = CreateEmptyTableRequest()
             create_request.id = [db_name, table_name]
             create_request.location = table_location

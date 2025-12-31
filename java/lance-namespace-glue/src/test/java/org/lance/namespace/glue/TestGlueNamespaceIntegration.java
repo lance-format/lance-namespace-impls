@@ -39,9 +39,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -60,6 +57,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *
  * <ol>
  *   <li>Configure AWS credentials (via environment variables, ~/.aws/credentials, or IAM role)
+ *   <li>Set AWS_S3_BUCKET_NAME environment variable
  *   <li>Run: make integ-test-glue
  * </ol>
  *
@@ -69,8 +67,9 @@ public class TestGlueNamespaceIntegration {
 
   private static final String AWS_REGION =
       System.getenv("AWS_REGION") != null ? System.getenv("AWS_REGION") : "us-east-1";
+  private static final String AWS_S3_BUCKET_NAME = System.getenv("AWS_S3_BUCKET_NAME");
   private static boolean awsCredentialsAvailable = false;
-  private static Path tempDir;
+  private static String s3Root;
 
   private GlueNamespace namespace;
   private BufferAllocator allocator;
@@ -79,6 +78,13 @@ public class TestGlueNamespaceIntegration {
 
   @BeforeAll
   public static void checkAwsCredentialsAvailable() {
+    // Check if S3 bucket is configured
+    if (AWS_S3_BUCKET_NAME == null || AWS_S3_BUCKET_NAME.isEmpty()) {
+      System.out.println("AWS_S3_BUCKET_NAME not set - skipping integration tests");
+      awsCredentialsAvailable = false;
+      return;
+    }
+
     // Check if AWS credentials are available via environment variables
     String accessKeyId = System.getenv("AWS_ACCESS_KEY_ID");
     String secretAccessKey = System.getenv("AWS_SECRET_ACCESS_KEY");
@@ -108,13 +114,9 @@ public class TestGlueNamespaceIntegration {
     }
 
     if (awsCredentialsAvailable) {
-      try {
-        tempDir = Files.createTempDirectory("lance_glue_test_");
-        System.out.println("Created temp directory: " + tempDir);
-      } catch (IOException e) {
-        System.out.println("Failed to create temp directory: " + e.getMessage());
-        awsCredentialsAvailable = false;
-      }
+      String uniqueId = UUID.randomUUID().toString().substring(0, 8);
+      s3Root = "s3://" + AWS_S3_BUCKET_NAME + "/lance_glue_test_" + uniqueId;
+      System.out.println("Using S3 root: " + s3Root);
     }
   }
 
@@ -131,7 +133,7 @@ public class TestGlueNamespaceIntegration {
 
     Map<String, String> config = new HashMap<>();
     config.put("region", AWS_REGION);
-    config.put("root", tempDir.toString());
+    config.put("root", s3Root);
 
     namespace.initialize(config, allocator);
   }
@@ -243,7 +245,7 @@ public class TestGlueNamespaceIntegration {
   public void testTableOperations() {
     String dbName = createTestDatabase("");
     String tableName = "test_table_" + UUID.randomUUID().toString().substring(0, 8);
-    String tableLocation = tempDir.resolve(dbName).resolve(tableName + ".lance").toString();
+    String tableLocation = s3Root + "/" + dbName + "/" + tableName + ".lance";
 
     // Create empty table
     CreateEmptyTableRequest createRequest = new CreateEmptyTableRequest();
@@ -294,7 +296,7 @@ public class TestGlueNamespaceIntegration {
       String tableName = "table_" + i + "_" + UUID.randomUUID().toString().substring(0, 6);
       tableNames.add(tableName);
 
-      String tableLocation = tempDir.resolve(dbName).resolve(tableName + ".lance").toString();
+      String tableLocation = s3Root + "/" + dbName + "/" + tableName + ".lance";
       CreateEmptyTableRequest createRequest = new CreateEmptyTableRequest();
       createRequest.setId(Arrays.asList(dbName, tableName));
       createRequest.setLocation(tableLocation);
