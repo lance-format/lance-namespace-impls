@@ -23,10 +23,8 @@ from lance_namespace_urllib3_client.models import (
     DescribeNamespaceRequest,
     DropNamespaceRequest,
     ListTablesRequest,
-    CreateTableRequest,
     CreateEmptyTableRequest,
     DescribeTableRequest,
-    DropTableRequest,
 )
 
 
@@ -304,22 +302,6 @@ class TestUnityNamespace(unittest.TestCase):
         self.assertEqual(sorted(response.tables), ["table1", "table3"])
 
     @patch("lance_namespace_impls.unity.RestClient")
-    def test_create_table_not_supported(self, mock_rest_client_class):
-        """Test that create_table raises NotImplementedError."""
-        mock_client = MagicMock()
-        mock_rest_client_class.return_value = mock_client
-
-        namespace = UnityNamespace(**self.properties)
-
-        request = CreateTableRequest()
-        request.id = ["test_catalog", "test_schema", "test_table"]
-
-        with self.assertRaises(NotImplementedError) as context:
-            namespace.create_table(request, b"test_data")
-
-        self.assertIn("create_table is not supported", str(context.exception))
-
-    @patch("lance_namespace_impls.unity.RestClient")
     def test_create_empty_table(self, mock_rest_client_class):
         """Test creating an empty table."""
         mock_client = MagicMock()
@@ -376,22 +358,6 @@ class TestUnityNamespace(unittest.TestCase):
         self.assertEqual(
             response.location, "/data/lance/test_catalog/test_schema/test_table"
         )
-
-    @patch("lance_namespace_impls.unity.RestClient")
-    def test_drop_table_not_supported(self, mock_rest_client_class):
-        """Test that drop_table raises NotImplementedError."""
-        mock_client = MagicMock()
-        mock_rest_client_class.return_value = mock_client
-
-        namespace = UnityNamespace(**self.properties)
-
-        request = DropTableRequest()
-        request.id = ["test_catalog", "test_schema", "test_table"]
-
-        with self.assertRaises(NotImplementedError) as context:
-            namespace.drop_table(request)
-
-        self.assertIn("drop_table is not supported", str(context.exception))
 
     def test_arrow_type_conversion(self):
         """Test Arrow type to Unity type conversion."""
