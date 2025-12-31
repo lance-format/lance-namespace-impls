@@ -84,8 +84,8 @@ test-iceberg:
 
 .PHONY: lint-polaris
 lint-polaris:
-	uv run ruff check src/lance_namespace_impls/polaris.py tests/test_polaris.py
-	uv run ruff format --check src/lance_namespace_impls/polaris.py tests/test_polaris.py
+	uv run ruff check src/lance_namespace_impls/polaris.py tests/test_polaris.py tests/test_polaris_integration.py
+	uv run ruff format --check src/lance_namespace_impls/polaris.py tests/test_polaris.py tests/test_polaris_integration.py
 
 .PHONY: install-polaris
 install-polaris:
@@ -143,7 +143,7 @@ integ-test-hive:
 
 .PHONY: integ-test-polaris
 integ-test-polaris:
-	uv run pytest tests/test_polaris.py -m integration
+	uv run pytest tests/test_polaris_integration.py -v
 
 .PHONY: integ-test-unity
 integ-test-unity:

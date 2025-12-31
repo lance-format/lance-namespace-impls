@@ -4,7 +4,7 @@ Polaris Catalog namespace implementation for Lance.
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from lance.namespace import LanceNamespace
 from lance_namespace_urllib3_client.models import (
@@ -72,8 +72,8 @@ class PolarisNamespaceConfig:
         self.root = properties.get(self.ROOT, "/tmp/lance")
 
     def get_full_api_url(self) -> str:
-        """Get the full API URL."""
-        return self.endpoint.rstrip("/")
+        """Get the full API URL for Polaris catalog operations."""
+        return self.endpoint.rstrip("/") + "/api/catalog"
 
 
 class PolarisNamespace(LanceNamespace):
@@ -110,12 +110,18 @@ class PolarisNamespace(LanceNamespace):
         """List namespaces."""
         ns_id = self._parse_identifier(request.id)
 
+        if not ns_id:
+            raise InvalidInputException("Must specify at least the catalog")
+
         try:
-            if not ns_id:
-                path = "/namespaces"
+            catalog = ns_id[0]
+            if len(ns_id) == 1:
+                # List namespaces at catalog level
+                path = f"/v1/{catalog}/namespaces"
             else:
-                parent_path = ".".join(ns_id)
-                path = f"/namespaces/{parent_path}/namespaces"
+                # List nested namespaces
+                parent_path = ".".join(ns_id[1:])
+                path = f"/v1/{catalog}/namespaces/{parent_path}/namespaces"
 
             response = self.rest_client.get(path)
 
@@ -123,7 +129,9 @@ class PolarisNamespace(LanceNamespace):
             if response and "namespaces" in response:
                 for ns in response["namespaces"]:
                     if ns:
-                        namespaces.append(".".join(ns))
+                        # Prefix with catalog name
+                        full_ns = [catalog] + list(ns)
+                        namespaces.append(".".join(full_ns))
 
             namespaces = sorted(set(namespaces))
 
@@ -131,6 +139,8 @@ class PolarisNamespace(LanceNamespace):
 
         except RestClientException as e:
             raise InternalException(f"Failed to list namespaces: {e}")
+        except InvalidInputException:
+            raise
         except Exception as e:
             raise InternalException(f"Failed to list namespaces: {e}")
 
@@ -140,18 +150,25 @@ class PolarisNamespace(LanceNamespace):
         """Create a new namespace."""
         ns_id = self._parse_identifier(request.id)
 
-        if not ns_id:
-            raise InvalidInputException("Namespace must have at least one level")
+        if len(ns_id) < 2:
+            raise InvalidInputException(
+                "Namespace must have at least catalog and namespace levels"
+            )
 
         try:
+            catalog = ns_id[0]
+            namespace = ns_id[1:]
+
             create_request = {
-                "namespace": ns_id,
+                "namespace": namespace,
                 "properties": request.properties or {},
             }
 
-            response = self.rest_client.post("/namespaces", create_request)
+            response = self.rest_client.post(
+                f"/v1/{catalog}/namespaces", create_request
+            )
 
-            logger.info(f"Created namespace: {'.'.join(ns_id)}")
+            logger.info(f"Created namespace: {catalog}.{'.'.join(namespace)}")
 
             properties = response.get("properties") if response else {}
             return CreateNamespaceResponse(properties=properties)
@@ -173,12 +190,17 @@ class PolarisNamespace(LanceNamespace):
         """Describe a namespace."""
         ns_id = self._parse_identifier(request.id)
 
-        if not ns_id:
-            raise InvalidInputException("Namespace must have at least one level")
+        if len(ns_id) < 2:
+            raise InvalidInputException(
+                "Namespace must have at least catalog and namespace levels"
+            )
 
         try:
-            namespace_path = ".".join(ns_id)
-            response = self.rest_client.get(f"/namespaces/{namespace_path}")
+            catalog = ns_id[0]
+            namespace_path = ".".join(ns_id[1:])
+            response = self.rest_client.get(
+                f"/v1/{catalog}/namespaces/{namespace_path}"
+            )
 
             properties = response.get("properties") if response else {}
             return DescribeNamespaceResponse(properties=properties)
@@ -204,14 +226,17 @@ class PolarisNamespace(LanceNamespace):
         """Drop a namespace. Only RESTRICT mode is supported."""
         ns_id = self._parse_identifier(request.id)
 
-        if not ns_id:
-            raise InvalidInputException("Namespace must have at least one level")
+        if len(ns_id) < 2:
+            raise InvalidInputException(
+                "Namespace must have at least catalog and namespace levels"
+            )
 
         try:
-            namespace_path = ".".join(ns_id)
-            self.rest_client.delete(f"/namespaces/{namespace_path}")
+            catalog = ns_id[0]
+            namespace_path = ".".join(ns_id[1:])
+            self.rest_client.delete(f"/v1/{catalog}/namespaces/{namespace_path}")
 
-            logger.info(f"Dropped namespace: {'.'.join(ns_id)}")
+            logger.info(f"Dropped namespace: {catalog}.{namespace_path}")
 
             return DropNamespaceResponse(properties={})
 
@@ -228,13 +253,14 @@ class PolarisNamespace(LanceNamespace):
         """List tables in a namespace."""
         ns_id = self._parse_identifier(request.id)
 
-        if not ns_id:
-            raise InvalidInputException("Namespace must have at least one level")
+        if len(ns_id) < 2:
+            raise InvalidInputException("Must specify at least catalog and namespace")
 
         try:
-            namespace_path = ".".join(ns_id)
+            catalog = ns_id[0]
+            namespace_path = ".".join(ns_id[1:])
             response = self.rest_client.get(
-                f"/namespaces/{namespace_path}/generic-tables"
+                f"/polaris/v1/{catalog}/namespaces/{namespace_path}/generic-tables"
             )
 
             tables = []
@@ -265,18 +291,21 @@ class PolarisNamespace(LanceNamespace):
         """Create an empty table (metadata only operation)."""
         table_id = self._parse_identifier(request.id)
 
-        if len(table_id) < 2:
+        if len(table_id) < 3:
             raise InvalidInputException(
-                "Table identifier must have at least namespace and table name"
+                "Table identifier must have catalog, namespace, and table name"
             )
 
-        namespace = table_id[:-1]
+        catalog = table_id[0]
+        namespace = table_id[1:-1]
         table_name = table_id[-1]
 
         try:
             table_path = request.location
             if not table_path:
-                table_path = f"{self.config.root}/{'/'.join(namespace)}/{table_name}"
+                table_path = (
+                    f"{self.config.root}/{'/'.join(table_id[:-1])}/{table_name}"
+                )
 
             properties = {self.TABLE_TYPE_KEY: self.TABLE_FORMAT_LANCE}
 
@@ -288,8 +317,9 @@ class PolarisNamespace(LanceNamespace):
             }
 
             namespace_path = ".".join(namespace)
-            response = self.rest_client.post(
-                f"/namespaces/{namespace_path}/generic-tables", create_request
+            self.rest_client.post(
+                f"/polaris/v1/{catalog}/namespaces/{namespace_path}/generic-tables",
+                create_request,
             )
 
             logger.info(f"Created table: {'.'.join(table_id)}")
@@ -303,7 +333,7 @@ class PolarisNamespace(LanceNamespace):
                 )
             if e.is_not_found():
                 raise NamespaceNotFoundException(
-                    f"Namespace not found: {'.'.join(namespace)}"
+                    f"Namespace not found: {catalog}.{'.'.join(namespace)}"
                 )
             raise InternalException(f"Failed to create empty table: {e}")
         except (
@@ -322,25 +352,24 @@ class PolarisNamespace(LanceNamespace):
         """
         table_id = self._parse_identifier(request.id)
 
-        if len(table_id) < 2:
+        if len(table_id) < 3:
             raise InvalidInputException(
-                "Table identifier must have at least namespace and table name"
+                "Table identifier must have catalog, namespace, and table name"
             )
 
-        namespace = table_id[:-1]
+        catalog = table_id[0]
+        namespace = table_id[1:-1]
         table_name = table_id[-1]
 
         try:
             namespace_path = ".".join(namespace)
 
             response = self.rest_client.get(
-                f"/namespaces/{namespace_path}/generic-tables/{table_name}"
+                f"/polaris/v1/{catalog}/namespaces/{namespace_path}/generic-tables/{table_name}"
             )
 
             if not response or "table" not in response:
-                raise TableNotFoundException(
-                    f"Table not found: {'.'.join(request.id)}"
-                )
+                raise TableNotFoundException(f"Table not found: {'.'.join(request.id)}")
 
             table = response["table"]
             table_format = table.get("format", "")
@@ -352,14 +381,12 @@ class PolarisNamespace(LanceNamespace):
 
             return DescribeTableResponse(
                 location=table.get("base-location"),
-                storage_options=table.get("properties", {})
+                storage_options=table.get("properties", {}),
             )
 
         except RestClientException as e:
             if e.is_not_found():
-                raise TableNotFoundException(
-                    f"Table not found: {'.'.join(request.id)}"
-                )
+                raise TableNotFoundException(f"Table not found: {'.'.join(request.id)}")
             raise InternalException(f"Failed to describe table: {e}")
         except (TableNotFoundException, InvalidInputException):
             raise
@@ -378,19 +405,20 @@ class PolarisNamespace(LanceNamespace):
         """Deregister a table (remove from catalog without deleting data)."""
         table_id = self._parse_identifier(request.id)
 
-        if len(table_id) < 2:
+        if len(table_id) < 3:
             raise InvalidInputException(
-                "Table identifier must have at least namespace and table name"
+                "Table identifier must have catalog, namespace, and table name"
             )
 
-        namespace = table_id[:-1]
+        catalog = table_id[0]
+        namespace = table_id[1:-1]
         table_name = table_id[-1]
 
         try:
             namespace_path = ".".join(namespace)
 
             response = self.rest_client.get(
-                f"/namespaces/{namespace_path}/generic-tables/{table_name}"
+                f"/polaris/v1/{catalog}/namespaces/{namespace_path}/generic-tables/{table_name}"
             )
 
             table_location = None
@@ -398,7 +426,7 @@ class PolarisNamespace(LanceNamespace):
                 table_location = response["table"].get("base-location")
 
             self.rest_client.delete(
-                f"/namespaces/{namespace_path}/generic-tables/{table_name}"
+                f"/polaris/v1/{catalog}/namespaces/{namespace_path}/generic-tables/{table_name}"
             )
 
             logger.info(f"Deregistered table: {'.'.join(table_id)}")
@@ -407,9 +435,7 @@ class PolarisNamespace(LanceNamespace):
 
         except RestClientException as e:
             if e.is_not_found():
-                raise TableNotFoundException(
-                    f"Table not found: {'.'.join(request.id)}"
-                )
+                raise TableNotFoundException(f"Table not found: {'.'.join(request.id)}")
             raise InternalException(f"Failed to deregister table: {e}")
         except (TableNotFoundException, InvalidInputException):
             raise

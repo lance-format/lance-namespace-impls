@@ -264,7 +264,7 @@ requires-dist = [
     { name = "thrift", marker = "extra == 'hive3'", specifier = ">=0.13.0" },
     { name = "typing-extensions", specifier = ">=4.5.0" },
 ]
-provides-extras = ["glue", "hive2", "hive3", "unity", "all", "dev"]
+provides-extras = ["glue", "hive2", "hive3", "unity", "polaris", "all", "dev"]
 
 [[package]]
 name = "lance-namespace-urllib3-client"

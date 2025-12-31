@@ -74,8 +74,8 @@ public class TestPolarisNamespaceIntegration {
   public static void checkPolarisAvailable() {
     try {
       // Try to check if Polaris API is available by checking a known endpoint
-      // We'll try the namespaces endpoint which should exist
-      URL url = new URL(POLARIS_ENDPOINT + "/api/catalog/v1/namespaces");
+      // We'll try the namespaces endpoint with the test catalog warehouse
+      URL url = new URL(POLARIS_ENDPOINT + "/api/catalog/v1/test_catalog/namespaces");
       HttpURLConnection conn = (HttpURLConnection) url.openConnection();
       conn.setRequestMethod("GET");
       conn.setConnectTimeout(1000);
@@ -224,9 +224,9 @@ public class TestPolarisNamespaceIntegration {
 
     // List namespaces
     ListNamespacesRequest listRequest = new ListNamespacesRequest();
+    listRequest.setId(Collections.singletonList(testCatalog));
     ListNamespacesResponse listResponse = namespace.listNamespaces(listRequest);
-    assertThat(listResponse.getNamespaces())
-        .anyMatch(ns -> ns.equals(Arrays.asList(testCatalog, testNamespace)));
+    assertThat(listResponse.getNamespaces()).contains(testCatalog + "." + testNamespace);
 
     // Drop namespace
     DropNamespaceRequest dropRequest = new DropNamespaceRequest();
@@ -236,7 +236,7 @@ public class TestPolarisNamespaceIntegration {
     // Verify namespace doesn't exist
     assertThatThrownBy(() -> namespace.namespaceExists(existsRequest))
         .isInstanceOf(LanceNamespaceException.class)
-        .hasMessageContaining("404");
+        .hasMessageContaining("not found");
   }
 
   @Test
@@ -283,7 +283,7 @@ public class TestPolarisNamespaceIntegration {
     // Verify table doesn't exist
     assertThatThrownBy(() -> namespace.tableExists(existsRequest))
         .isInstanceOf(LanceNamespaceException.class)
-        .hasMessageContaining("404");
+        .hasMessageContaining("not found");
   }
 
   @Test

@@ -16,7 +16,6 @@ from lance_namespace_impls.rest_client import (
     TableNotFoundException,
     TableAlreadyExistsException,
     InvalidInputException,
-    InternalException,
 )
 from lance_namespace_urllib3_client.models import (
     ListNamespacesRequest,
@@ -73,7 +72,9 @@ class TestPolarisNamespaceConfig(unittest.TestCase):
         properties = {"polaris.endpoint": "https://polaris.example.com/"}
         config = PolarisNamespaceConfig(properties)
 
-        self.assertEqual(config.get_full_api_url(), "https://polaris.example.com")
+        self.assertEqual(
+            config.get_full_api_url(), "https://polaris.example.com/api/catalog"
+        )
 
 
 class TestPolarisNamespace(unittest.TestCase):
@@ -99,24 +100,25 @@ class TestPolarisNamespace(unittest.TestCase):
         self.assertIn("polaris.example.com", ns_id)
 
     @patch("lance_namespace_impls.polaris.RestClient")
-    def test_list_namespaces_top_level(self, mock_rest_client_class):
-        """Test listing top-level namespaces."""
+    def test_list_namespaces_catalog_level(self, mock_rest_client_class):
+        """Test listing namespaces at catalog level."""
         mock_client = MagicMock()
         mock_rest_client_class.return_value = mock_client
 
-        mock_client.get.return_value = {
-            "namespaces": [["ns1"], ["ns2"], ["ns3"]]
-        }
+        mock_client.get.return_value = {"namespaces": [["ns1"], ["ns2"], ["ns3"]]}
 
         namespace = PolarisNamespace(**self.properties)
 
         request = ListNamespacesRequest()
-        request.id = []
+        request.id = ["test_catalog"]
 
         response = namespace.list_namespaces(request)
 
-        self.assertEqual(sorted(response.namespaces), ["ns1", "ns2", "ns3"])
-        mock_client.get.assert_called_once_with("/namespaces")
+        self.assertEqual(
+            sorted(response.namespaces),
+            ["test_catalog.ns1", "test_catalog.ns2", "test_catalog.ns3"],
+        )
+        mock_client.get.assert_called_once_with("/v1/test_catalog/namespaces")
 
     @patch("lance_namespace_impls.polaris.RestClient")
     def test_list_namespaces_nested(self, mock_rest_client_class):
@@ -131,12 +133,17 @@ class TestPolarisNamespace(unittest.TestCase):
         namespace = PolarisNamespace(**self.properties)
 
         request = ListNamespacesRequest()
-        request.id = ["parent"]
+        request.id = ["test_catalog", "parent"]
 
         response = namespace.list_namespaces(request)
 
-        self.assertEqual(sorted(response.namespaces), ["parent.child1", "parent.child2"])
-        mock_client.get.assert_called_once_with("/namespaces/parent/namespaces")
+        self.assertEqual(
+            sorted(response.namespaces),
+            ["test_catalog.parent.child1", "test_catalog.parent.child2"],
+        )
+        mock_client.get.assert_called_once_with(
+            "/v1/test_catalog/namespaces/parent/namespaces"
+        )
 
     @patch("lance_namespace_impls.polaris.RestClient")
     def test_create_namespace(self, mock_rest_client_class):
@@ -149,13 +156,16 @@ class TestPolarisNamespace(unittest.TestCase):
         namespace = PolarisNamespace(**self.properties)
 
         request = CreateNamespaceRequest()
-        request.id = ["test_namespace"]
+        request.id = ["test_catalog", "test_namespace"]
         request.properties = {"key": "value"}
 
         response = namespace.create_namespace(request)
 
         self.assertEqual(response.properties, {"key": "value"})
-        mock_client.post.assert_called_once()
+        mock_client.post.assert_called_once_with(
+            "/v1/test_catalog/namespaces",
+            {"namespace": ["test_namespace"], "properties": {"key": "value"}},
+        )
 
     @patch("lance_namespace_impls.polaris.RestClient")
     def test_create_namespace_already_exists(self, mock_rest_client_class):
@@ -164,13 +174,13 @@ class TestPolarisNamespace(unittest.TestCase):
         mock_rest_client_class.return_value = mock_client
 
         mock_client.post.side_effect = RestClientException(
-            "Conflict", status_code=409, response_body=""
+            status_code=409, response_body="Conflict"
         )
 
         namespace = PolarisNamespace(**self.properties)
 
         request = CreateNamespaceRequest()
-        request.id = ["existing_namespace"]
+        request.id = ["test_catalog", "existing_namespace"]
 
         with self.assertRaises(NamespaceAlreadyExistsException):
             namespace.create_namespace(request)
@@ -186,12 +196,14 @@ class TestPolarisNamespace(unittest.TestCase):
         namespace = PolarisNamespace(**self.properties)
 
         request = DescribeNamespaceRequest()
-        request.id = ["test_namespace"]
+        request.id = ["test_catalog", "test_namespace"]
 
         response = namespace.describe_namespace(request)
 
         self.assertEqual(response.properties, {"key": "value"})
-        mock_client.get.assert_called_once_with("/namespaces/test_namespace")
+        mock_client.get.assert_called_once_with(
+            "/v1/test_catalog/namespaces/test_namespace"
+        )
 
     @patch("lance_namespace_impls.polaris.RestClient")
     def test_describe_namespace_not_found(self, mock_rest_client_class):
@@ -200,13 +212,13 @@ class TestPolarisNamespace(unittest.TestCase):
         mock_rest_client_class.return_value = mock_client
 
         mock_client.get.side_effect = RestClientException(
-            "Not found", status_code=404, response_body=""
+            status_code=404, response_body="Not found"
         )
 
         namespace = PolarisNamespace(**self.properties)
 
         request = DescribeNamespaceRequest()
-        request.id = ["nonexistent"]
+        request.id = ["test_catalog", "nonexistent"]
 
         with self.assertRaises(NamespaceNotFoundException):
             namespace.describe_namespace(request)
@@ -220,12 +232,14 @@ class TestPolarisNamespace(unittest.TestCase):
         namespace = PolarisNamespace(**self.properties)
 
         request = DropNamespaceRequest()
-        request.id = ["test_namespace"]
+        request.id = ["test_catalog", "test_namespace"]
 
         response = namespace.drop_namespace(request)
 
         self.assertIsNotNone(response)
-        mock_client.delete.assert_called_once_with("/namespaces/test_namespace")
+        mock_client.delete.assert_called_once_with(
+            "/v1/test_catalog/namespaces/test_namespace"
+        )
 
     @patch("lance_namespace_impls.polaris.RestClient")
     def test_drop_namespace_not_found(self, mock_rest_client_class):
@@ -234,13 +248,13 @@ class TestPolarisNamespace(unittest.TestCase):
         mock_rest_client_class.return_value = mock_client
 
         mock_client.delete.side_effect = RestClientException(
-            "Not found", status_code=404, response_body=""
+            status_code=404, response_body="Not found"
         )
 
         namespace = PolarisNamespace(**self.properties)
 
         request = DropNamespaceRequest()
-        request.id = ["nonexistent"]
+        request.id = ["test_catalog", "nonexistent"]
 
         response = namespace.drop_namespace(request)
 
@@ -263,11 +277,14 @@ class TestPolarisNamespace(unittest.TestCase):
         namespace = PolarisNamespace(**self.properties)
 
         request = ListTablesRequest()
-        request.id = ["test_namespace"]
+        request.id = ["test_catalog", "test_namespace"]
 
         response = namespace.list_tables(request)
 
         self.assertEqual(sorted(response.tables), ["table1", "table2", "table3"])
+        mock_client.get.assert_called_once_with(
+            "/polaris/v1/test_catalog/namespaces/test_namespace/generic-tables"
+        )
 
     @patch("lance_namespace_impls.polaris.RestClient")
     def test_create_empty_table(self, mock_rest_client_class):
@@ -280,14 +297,15 @@ class TestPolarisNamespace(unittest.TestCase):
         namespace = PolarisNamespace(**self.properties)
 
         request = CreateEmptyTableRequest()
-        request.id = ["test_namespace", "test_table"]
+        request.id = ["test_catalog", "test_namespace", "test_table"]
         request.location = None
 
         response = namespace.create_empty_table(request)
 
         self.assertEqual(
-            response.location, "/data/lance/test_namespace/test_table"
+            response.location, "/data/lance/test_catalog/test_namespace/test_table"
         )
+        mock_client.post.assert_called_once()
 
     @patch("lance_namespace_impls.polaris.RestClient")
     def test_create_empty_table_with_location(self, mock_rest_client_class):
@@ -300,12 +318,21 @@ class TestPolarisNamespace(unittest.TestCase):
         namespace = PolarisNamespace(**self.properties)
 
         request = CreateEmptyTableRequest()
-        request.id = ["test_namespace", "test_table"]
+        request.id = ["test_catalog", "test_namespace", "test_table"]
         request.location = "/custom/path/test_table"
 
         response = namespace.create_empty_table(request)
 
         self.assertEqual(response.location, "/custom/path/test_table")
+        mock_client.post.assert_called_once_with(
+            "/polaris/v1/test_catalog/namespaces/test_namespace/generic-tables",
+            {
+                "name": "test_table",
+                "format": "lance",
+                "base-location": "/custom/path/test_table",
+                "properties": {"table_type": "lance"},
+            },
+        )
 
     @patch("lance_namespace_impls.polaris.RestClient")
     def test_create_empty_table_already_exists(self, mock_rest_client_class):
@@ -314,13 +341,13 @@ class TestPolarisNamespace(unittest.TestCase):
         mock_rest_client_class.return_value = mock_client
 
         mock_client.post.side_effect = RestClientException(
-            "Conflict", status_code=409, response_body=""
+            status_code=409, response_body="Conflict"
         )
 
         namespace = PolarisNamespace(**self.properties)
 
         request = CreateEmptyTableRequest()
-        request.id = ["test_namespace", "existing_table"]
+        request.id = ["test_catalog", "test_namespace", "existing_table"]
 
         with self.assertRaises(TableAlreadyExistsException):
             namespace.create_empty_table(request)
@@ -342,12 +369,15 @@ class TestPolarisNamespace(unittest.TestCase):
         namespace = PolarisNamespace(**self.properties)
 
         request = DescribeTableRequest()
-        request.id = ["test_namespace", "test_table"]
+        request.id = ["test_catalog", "test_namespace", "test_table"]
 
         response = namespace.describe_table(request)
 
         self.assertEqual(response.location, "/data/lance/ns/table")
         self.assertEqual(response.storage_options, {"key": "value"})
+        mock_client.get.assert_called_once_with(
+            "/polaris/v1/test_catalog/namespaces/test_namespace/generic-tables/test_table"
+        )
 
     @patch("lance_namespace_impls.polaris.RestClient")
     def test_describe_table_not_lance(self, mock_rest_client_class):
@@ -366,7 +396,7 @@ class TestPolarisNamespace(unittest.TestCase):
         namespace = PolarisNamespace(**self.properties)
 
         request = DescribeTableRequest()
-        request.id = ["test_namespace", "test_table"]
+        request.id = ["test_catalog", "test_namespace", "test_table"]
 
         with self.assertRaises(InvalidInputException):
             namespace.describe_table(request)
@@ -378,13 +408,13 @@ class TestPolarisNamespace(unittest.TestCase):
         mock_rest_client_class.return_value = mock_client
 
         mock_client.get.side_effect = RestClientException(
-            "Not found", status_code=404, response_body=""
+            status_code=404, response_body="Not found"
         )
 
         namespace = PolarisNamespace(**self.properties)
 
         request = DescribeTableRequest()
-        request.id = ["test_namespace", "nonexistent"]
+        request.id = ["test_catalog", "test_namespace", "nonexistent"]
 
         with self.assertRaises(TableNotFoundException):
             namespace.describe_table(request)
@@ -402,12 +432,17 @@ class TestPolarisNamespace(unittest.TestCase):
         namespace = PolarisNamespace(**self.properties)
 
         request = DeregisterTableRequest()
-        request.id = ["test_namespace", "test_table"]
+        request.id = ["test_catalog", "test_namespace", "test_table"]
 
         response = namespace.deregister_table(request)
 
         self.assertEqual(response.location, "/data/lance/ns/table")
-        mock_client.delete.assert_called_once()
+        mock_client.get.assert_called_once_with(
+            "/polaris/v1/test_catalog/namespaces/test_namespace/generic-tables/test_table"
+        )
+        mock_client.delete.assert_called_once_with(
+            "/polaris/v1/test_catalog/namespaces/test_namespace/generic-tables/test_table"
+        )
 
     @patch("lance_namespace_impls.polaris.RestClient")
     def test_deregister_table_not_found(self, mock_rest_client_class):
@@ -416,13 +451,13 @@ class TestPolarisNamespace(unittest.TestCase):
         mock_rest_client_class.return_value = mock_client
 
         mock_client.get.side_effect = RestClientException(
-            "Not found", status_code=404, response_body=""
+            status_code=404, response_body="Not found"
         )
 
         namespace = PolarisNamespace(**self.properties)
 
         request = DeregisterTableRequest()
-        request.id = ["test_namespace", "nonexistent"]
+        request.id = ["test_catalog", "test_namespace", "nonexistent"]
 
         with self.assertRaises(TableNotFoundException):
             namespace.deregister_table(request)
@@ -443,17 +478,17 @@ class TestPolarisNamespace(unittest.TestCase):
         namespace = PolarisNamespace(**self.properties)
 
         request = CreateEmptyTableRequest()
-        request.id = ["only_namespace"]
+        request.id = ["catalog", "only_namespace"]  # Missing table name
 
         with self.assertRaises(InvalidInputException):
             namespace.create_empty_table(request)
 
     def test_invalid_namespace_id(self):
-        """Test that namespace operations fail with empty identifiers."""
+        """Test that namespace operations fail with invalid identifiers."""
         namespace = PolarisNamespace(**self.properties)
 
         request = CreateNamespaceRequest()
-        request.id = []
+        request.id = ["only_catalog"]  # Missing namespace level
 
         with self.assertRaises(InvalidInputException):
             namespace.create_namespace(request)

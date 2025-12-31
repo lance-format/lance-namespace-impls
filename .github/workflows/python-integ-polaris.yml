@@ -18,7 +18,9 @@ on:
       - main
     paths:
       - python/src/lance_namespace_impls/polaris.py
+      - python/src/lance_namespace_impls/rest_client.py
       - python/tests/test_polaris.py
+      - python/tests/test_polaris_integration.py
       - docker/polaris/**
       - .github/workflows/python-integ-polaris.yml
   pull_request:
@@ -29,7 +31,9 @@ on:
       - reopened
     paths:
       - python/src/lance_namespace_impls/polaris.py
+      - python/src/lance_namespace_impls/rest_client.py
       - python/tests/test_polaris.py
+      - python/tests/test_polaris_integration.py
       - docker/polaris/**
       - .github/workflows/python-integ-polaris.yml
   workflow_dispatch:
@@ -53,7 +57,7 @@ jobs:
         uses: astral-sh/setup-uv@v4
       - name: Start Polaris
         run: make docker-up-polaris
-      - name: Wait for Polaris to be ready
+      - name: Wait for Polaris and catalog setup
         run: |
           echo "Waiting for Polaris to be ready..."
           timeout 180 bash -c '
@@ -67,30 +71,32 @@ jobs:
             exit 1
           }
           echo "Polaris is ready"
-      - name: Create test catalog
-        run: |
+
+          # Wait for polaris-setup to complete (creates test_catalog)
+          echo "Waiting for polaris-setup to complete..."
+          timeout 60 bash -c '
+            while docker ps -q -f name=polaris-setup 2>/dev/null | grep -q .; do
+              echo "Waiting for polaris-setup container to finish..."
+              sleep 2
+            done
+          ' || echo "polaris-setup may have already completed"
+
+          # Verify catalog exists
+          echo "Verifying test_catalog exists..."
           TOKEN=$(curl -s -X POST http://localhost:8181/api/catalog/v1/oauth/tokens \
             -H 'Content-Type: application/x-www-form-urlencoded' \
             -d 'grant_type=client_credentials&client_id=root&client_secret=s3cr3t&scope=PRINCIPAL_ROLE:ALL' | \
             python3 -c "import sys, json; print(json.load(sys.stdin).get('access_token', ''))")
-          if [ -z "$TOKEN" ]; then
-            echo "Failed to get OAuth token"
-            exit 1
+
+          CATALOGS=$(curl -s http://localhost:8181/api/management/v1/catalogs \
+            -H "Authorization: Bearer $TOKEN")
+
+          if echo "$CATALOGS" | grep -q "test_catalog"; then
+            echo "test_catalog verified"
+          else
+            echo "Warning: test_catalog not found in catalogs: $CATALOGS"
+            docker compose -f docker/polaris/docker-compose.yml logs polaris-setup
           fi
-          curl -s -X POST http://localhost:8181/api/catalog/v1/catalogs \
-            -H "Authorization: Bearer $TOKEN" \
-            -H 'Content-Type: application/json' \
-            -d '{
-              "name": "test_catalog",
-              "type": "INTERNAL",
-              "properties": {
-                "default-base-location": "file:///data/warehouse/test_catalog"
-              },
-              "storageConfigInfo": {
-                "storageType": "FILE"
-              }
-            }' || echo "Catalog may already exist"
-          echo "Test catalog created/verified"
       - name: Install dependencies
         working-directory: python
         run: make install-polaris

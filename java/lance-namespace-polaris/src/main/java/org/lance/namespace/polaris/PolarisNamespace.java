@@ -99,18 +99,23 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
   public CreateNamespaceResponse createNamespace(CreateNamespaceRequest request) {
     ObjectIdentifier namespaceId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
-        namespaceId.levels() >= 1, "Namespace must have at least one level");
+        namespaceId.levels() >= 2, "Namespace must have at least catalog and namespace levels");
 
     try {
-      List<String> namespace = namespaceId.listStyleId();
+      List<String> parts = namespaceId.listStyleId();
+      String catalog = parts.get(0);
+      List<String> namespace = parts.subList(1, parts.size());
 
       PolarisModels.CreateNamespaceRequest polarisRequest =
           new PolarisModels.CreateNamespaceRequest(namespace, request.getProperties());
 
       PolarisModels.NamespaceResponse response =
-          restClient.post("/namespaces", polarisRequest, PolarisModels.NamespaceResponse.class);
+          restClient.post(
+              "/v1/" + catalog + "/namespaces",
+              polarisRequest,
+              PolarisModels.NamespaceResponse.class);
 
-      LOG.info("Created namespace: {}", String.join(".", namespace));
+      LOG.info("Created namespace: {}.{}", catalog, String.join(".", namespace));
 
       CreateNamespaceResponse result = new CreateNamespaceResponse();
       result.setProperties(response.getProperties());
@@ -128,13 +133,18 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
   public DescribeNamespaceResponse describeNamespace(DescribeNamespaceRequest request) {
     ObjectIdentifier namespaceId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
-        namespaceId.levels() >= 1, "Namespace must have at least one level");
+        namespaceId.levels() >= 2, "Namespace must have at least catalog and namespace levels");
 
     try {
-      String namespacePath = namespaceId.stringStyleId();
+      List<String> parts = namespaceId.listStyleId();
+      String catalog = parts.get(0);
+      List<String> namespaceParts = parts.subList(1, parts.size());
+      String namespacePath = String.join(".", namespaceParts);
 
       PolarisModels.NamespaceResponse response =
-          restClient.get("/namespaces/" + namespacePath, PolarisModels.NamespaceResponse.class);
+          restClient.get(
+              "/v1/" + catalog + "/namespaces/" + namespacePath,
+              PolarisModels.NamespaceResponse.class);
 
       DescribeNamespaceResponse result = new DescribeNamespaceResponse();
       result.setProperties(response.getProperties());
@@ -154,10 +164,15 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
             ? ObjectIdentifier.of(request.getId())
             : ObjectIdentifier.of(Collections.emptyList());
 
+    ValidationUtil.checkArgument(parentId.levels() >= 1, "Must specify at least the catalog");
+
     try {
-      String path = "/namespaces";
-      if (!parentId.isRoot()) {
-        path += "/" + parentId.stringStyleId() + "/namespaces";
+      List<String> parts = parentId.listStyleId();
+      String catalog = parts.get(0);
+      String path = "/v1/" + catalog + "/namespaces";
+      if (parts.size() > 1) {
+        List<String> namespaceParts = parts.subList(1, parts.size());
+        path = "/v1/" + catalog + "/namespaces/" + String.join(".", namespaceParts) + "/namespaces";
       }
 
       PolarisModels.ListNamespacesResponse response =
@@ -166,8 +181,11 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
       ListNamespacesResponse result = new ListNamespacesResponse();
       Set<String> namespaceSet = new LinkedHashSet<>();
       if (response.getNamespaces() != null) {
-        for (PolarisModels.ListNamespacesResponse.Namespace ns : response.getNamespaces()) {
-          namespaceSet.add(String.join(".", ns.getNamespace()));
+        for (List<String> ns : response.getNamespaces()) {
+          List<String> fullNs = new java.util.ArrayList<>();
+          fullNs.add(catalog);
+          fullNs.addAll(ns);
+          namespaceSet.add(String.join(".", fullNs));
         }
       }
       result.setNamespaces(namespaceSet);
@@ -181,12 +199,16 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
   public DropNamespaceResponse dropNamespace(DropNamespaceRequest request) {
     ObjectIdentifier namespaceId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
-        namespaceId.levels() >= 1, "Namespace must have at least one level");
+        namespaceId.levels() >= 2, "Namespace must have at least catalog and namespace levels");
 
     try {
-      String namespacePath = namespaceId.stringStyleId();
-      restClient.delete("/namespaces/" + namespacePath);
-      LOG.info("Dropped namespace: {}", namespacePath);
+      List<String> parts = namespaceId.listStyleId();
+      String catalog = parts.get(0);
+      List<String> namespaceParts = parts.subList(1, parts.size());
+      String namespacePath = String.join(".", namespaceParts);
+
+      restClient.delete("/v1/" + catalog + "/namespaces/" + namespacePath);
+      LOG.info("Dropped namespace: {}.{}", catalog, namespacePath);
       return new DropNamespaceResponse();
     } catch (RestClientException e) {
       if (e.isNotFound()) {
@@ -200,11 +222,16 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
   public void namespaceExists(NamespaceExistsRequest request) {
     ObjectIdentifier namespaceId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
-        namespaceId.levels() >= 1, "Namespace must have at least one level");
+        namespaceId.levels() >= 2, "Namespace must have at least catalog and namespace levels");
 
     try {
-      String namespacePath = namespaceId.stringStyleId();
-      restClient.get("/namespaces/" + namespacePath, PolarisModels.NamespaceResponse.class);
+      List<String> parts = namespaceId.listStyleId();
+      String catalog = parts.get(0);
+      List<String> namespaceParts = parts.subList(1, parts.size());
+      String namespacePath = String.join(".", namespaceParts);
+
+      restClient.get(
+          "/v1/" + catalog + "/namespaces/" + namespacePath, PolarisModels.NamespaceResponse.class);
     } catch (RestClientException e) {
       if (e.isNotFound()) {
         throw new NamespaceNotFoundException("Namespace not found: " + namespaceId.stringStyleId());
@@ -217,16 +244,22 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
   public void tableExists(TableExistsRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
-        tableId.levels() >= 2, "Table identifier must have at least 2 levels");
+        tableId.levels() >= 3, "Table identifier must have catalog, namespace, and table name");
 
     try {
       List<String> parts = tableId.listStyleId();
+      String catalog = parts.get(0);
       String tableName = parts.get(parts.size() - 1);
-      List<String> namespaceParts = parts.subList(0, parts.size() - 1);
+      List<String> namespaceParts = parts.subList(1, parts.size() - 1);
       String namespacePath = String.join(".", namespaceParts);
 
       restClient.get(
-          "/namespaces/" + namespacePath + "/generic-tables/" + tableName,
+          "/polaris/v1/"
+              + catalog
+              + "/namespaces/"
+              + namespacePath
+              + "/generic-tables/"
+              + tableName,
           PolarisModels.LoadGenericTableResponse.class);
     } catch (RestClientException e) {
       if (e.isNotFound()) {
@@ -240,12 +273,13 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
   public CreateEmptyTableResponse createEmptyTable(CreateEmptyTableRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
-        tableId.levels() >= 2, "Table identifier must have at least 2 levels");
+        tableId.levels() >= 3, "Table identifier must have catalog, namespace, and table name");
 
     try {
       List<String> parts = tableId.listStyleId();
+      String catalog = parts.get(0);
       String tableName = parts.get(parts.size() - 1);
-      List<String> namespaceParts = parts.subList(0, parts.size() - 1);
+      List<String> namespaceParts = parts.subList(1, parts.size() - 1);
       String namespacePath = String.join(".", namespaceParts);
 
       Map<String, String> properties = new HashMap<>();
@@ -258,11 +292,11 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
 
       PolarisModels.LoadGenericTableResponse response =
           restClient.post(
-              "/namespaces/" + namespacePath + "/generic-tables",
+              "/polaris/v1/" + catalog + "/namespaces/" + namespacePath + "/generic-tables",
               tableRequest,
               PolarisModels.LoadGenericTableResponse.class);
 
-      LOG.info("Created Lance table: {}.{}", namespacePath, tableName);
+      LOG.info("Created Lance table: {}.{}.{}", catalog, namespacePath, tableName);
 
       CreateEmptyTableResponse result = new CreateEmptyTableResponse();
       result.setLocation(response.getTable().getBaseLocation());
@@ -279,17 +313,23 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
   public DescribeTableResponse describeTable(DescribeTableRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
-        tableId.levels() >= 2, "Table identifier must have at least 2 levels");
+        tableId.levels() >= 3, "Table identifier must have catalog, namespace, and table name");
 
     try {
       List<String> parts = tableId.listStyleId();
+      String catalog = parts.get(0);
       String tableName = parts.get(parts.size() - 1);
-      List<String> namespaceParts = parts.subList(0, parts.size() - 1);
+      List<String> namespaceParts = parts.subList(1, parts.size() - 1);
       String namespacePath = String.join(".", namespaceParts);
 
       PolarisModels.LoadGenericTableResponse response =
           restClient.get(
-              "/namespaces/" + namespacePath + "/generic-tables/" + tableName,
+              "/polaris/v1/"
+                  + catalog
+                  + "/namespaces/"
+                  + namespacePath
+                  + "/generic-tables/"
+                  + tableName,
               PolarisModels.LoadGenericTableResponse.class);
 
       PolarisModels.GenericTable table = response.getTable();
@@ -317,14 +357,17 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
   public ListTablesResponse listTables(ListTablesRequest request) {
     ObjectIdentifier namespaceId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
-        namespaceId.levels() >= 1, "Namespace must have at least one level");
+        namespaceId.levels() >= 2, "Must specify at least catalog and namespace");
 
     try {
-      String namespacePath = namespaceId.stringStyleId();
+      List<String> parts = namespaceId.listStyleId();
+      String catalog = parts.get(0);
+      List<String> namespaceParts = parts.subList(1, parts.size());
+      String namespacePath = String.join(".", namespaceParts);
 
       PolarisModels.ListGenericTablesResponse response =
           restClient.get(
-              "/namespaces/" + namespacePath + "/generic-tables",
+              "/polaris/v1/" + catalog + "/namespaces/" + namespacePath + "/generic-tables",
               PolarisModels.ListGenericTablesResponse.class);
 
       ListTablesResponse result = new ListTablesResponse();
@@ -348,21 +391,33 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
   public DeregisterTableResponse deregisterTable(DeregisterTableRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
-        tableId.levels() >= 2, "Table identifier must have at least 2 levels");
+        tableId.levels() >= 3, "Table identifier must have catalog, namespace, and table name");
 
     try {
       List<String> parts = tableId.listStyleId();
+      String catalog = parts.get(0);
       String tableName = parts.get(parts.size() - 1);
-      List<String> namespaceParts = parts.subList(0, parts.size() - 1);
+      List<String> namespaceParts = parts.subList(1, parts.size() - 1);
       String namespacePath = String.join(".", namespaceParts);
 
       PolarisModels.LoadGenericTableResponse getResponse =
           restClient.get(
-              "/namespaces/" + namespacePath + "/generic-tables/" + tableName,
+              "/polaris/v1/"
+                  + catalog
+                  + "/namespaces/"
+                  + namespacePath
+                  + "/generic-tables/"
+                  + tableName,
               PolarisModels.LoadGenericTableResponse.class);
 
       String location = getResponse.getTable().getBaseLocation();
-      restClient.delete("/namespaces/" + namespacePath + "/generic-tables/" + tableName);
+      restClient.delete(
+          "/polaris/v1/"
+              + catalog
+              + "/namespaces/"
+              + namespacePath
+              + "/generic-tables/"
+              + tableName);
 
       DeregisterTableResponse result = new DeregisterTableResponse();
       result.setLocation(location);

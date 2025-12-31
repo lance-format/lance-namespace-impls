@@ -151,7 +151,7 @@ integ-test-hive3:
 
 .PHONY: integ-test-polaris
 integ-test-polaris:
-	./mvnw test -pl lance-namespace-polaris -Dtest="*IntegrationTest" -DfailIfNoTests=false
+	./mvnw test -pl lance-namespace-polaris -Dtest="*Integration" -DfailIfNoTests=false
 
 .PHONY: integ-test-unity
 integ-test-unity:

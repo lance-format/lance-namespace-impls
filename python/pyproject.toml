@@ -43,6 +43,11 @@ dev = [
     "pytest-cov>=4.0.0",
 ]
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/lance_namespace_impls"]
 

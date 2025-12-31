@@ -100,10 +100,10 @@ public class PolarisNamespaceConfig {
     return maxRetries;
   }
 
-  /** Get the full API URL for Polaris catalog operations. Format: {endpoint}/api/catalog/v1 */
+  /** Get the full API URL for Polaris catalog operations. Format: {endpoint}/api/catalog */
   public String getFullApiUrl() {
     String baseUrl =
         endpoint.endsWith("/") ? endpoint.substring(0, endpoint.length() - 1) : endpoint;
-    return baseUrl + "/api/catalog/v1";
+    return baseUrl + "/api/catalog";
   }
 }
