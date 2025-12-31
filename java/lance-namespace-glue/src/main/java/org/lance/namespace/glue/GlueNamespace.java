@@ -36,10 +36,6 @@ import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
-import org.lance.namespace.model.NamespaceExistsRequest;
-import org.lance.namespace.model.RegisterTableRequest;
-import org.lance.namespace.model.RegisterTableResponse;
-import org.lance.namespace.model.TableExistsRequest;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
@@ -185,6 +181,10 @@ public class GlueNamespace implements LanceNamespace, Closeable {
 
   @Override
   public DropNamespaceResponse dropNamespace(DropNamespaceRequest request) {
+    if ("Cascade".equalsIgnoreCase(request.getBehavior())) {
+      throw new InvalidInputException("Cascade behavior is not supported for this implementation");
+    }
+
     String namespaceName = namespaceFromId(request.getId());
 
     String mode = request.getMode() != null ? request.getMode().toLowerCase() : "fail";
@@ -201,13 +201,6 @@ public class GlueNamespace implements LanceNamespace, Closeable {
 
     deleteDatabase(namespaceName);
     return new DropNamespaceResponse();
-  }
-
-  @Override
-  public void namespaceExists(NamespaceExistsRequest request) {
-    String namespaceName = namespaceFromId(request.getId());
-    // Throws if database doesn't exist
-    getDatabase(namespaceName);
   }
 
   @Override
@@ -243,6 +236,11 @@ public class GlueNamespace implements LanceNamespace, Closeable {
 
   @Override
   public DescribeTableResponse describeTable(DescribeTableRequest request) {
+    if (Boolean.TRUE.equals(request.getLoadDetailedMetadata())) {
+      throw new InvalidInputException(
+          "load_detailed_metadata=true is not supported for this implementation");
+    }
+
     validateTableId(request.getId());
     String namespaceName = request.getId().get(0);
     String tableName = request.getId().get(1);
@@ -256,65 +254,6 @@ public class GlueNamespace implements LanceNamespace, Closeable {
     }
     response.setStorageOptions(config.getStorageOptions());
     return response;
-  }
-
-  @Override
-  public RegisterTableResponse registerTable(RegisterTableRequest request) {
-    validateTableId(request.getId());
-    String namespaceName = request.getId().get(0);
-    String tableName = request.getId().get(1);
-
-    if (request.getLocation() == null || request.getLocation().isEmpty()) {
-      throw new InvalidInputException("Table location is required", "BAD_REQUEST", "");
-    }
-    String location = request.getLocation();
-    location =
-        location != null && location.endsWith("/")
-            ? location.substring(0, location.length() - 1)
-            : location;
-    String mode = request.getMode() != null ? request.getMode().toLowerCase() : "create";
-
-    if ("overwrite".equals(mode)) {
-      deleteGlueTable(namespaceName, tableName, false);
-    }
-
-    try {
-      // TODO: register table mode
-      Map<String, String> params = Maps.newHashMap();
-      if (request.getProperties() != null) {
-        params.putAll(request.getProperties());
-      }
-      params.put(TABLE_TYPE_PROP, LANCE_TABLE_TYPE_VALUE);
-      params.put(MANAGED_BY_PROP, STORAGE_VALUE); // Always storage for existing tables
-
-      TableInput tableInput =
-          TableInput.builder()
-              .name(tableName)
-              .storageDescriptor(
-                  StorageDescriptor.builder().location(location).parameters(params).build())
-              .build();
-
-      glueClient.createTable(
-          software.amazon.awssdk.services.glue.model.CreateTableRequest.builder()
-              .catalogId(config.catalogId())
-              .databaseName(namespaceName)
-              .tableInput(tableInput)
-              .build());
-
-      RegisterTableResponse response = new RegisterTableResponse();
-      response.setLocation(location);
-      response.setProperties(request.getProperties());
-      return response;
-    } catch (AlreadyExistsException e) {
-      throw GlueToLanceErrorConverter.tableConflict(
-          e, "Table already exists: %s.%s", namespaceName, tableName);
-    } catch (EntityNotFoundException e) {
-      throw GlueToLanceErrorConverter.namespaceNotFound(
-          e, "Namespace not found: %s", namespaceName);
-    } catch (GlueException e) {
-      throw GlueToLanceErrorConverter.serverError(
-          e, "Failed to register table: %s.%s", namespaceName, tableName);
-    }
   }
 
   @Override
@@ -394,18 +333,6 @@ public class GlueNamespace implements LanceNamespace, Closeable {
       throw GlueToLanceErrorConverter.serverError(
           e, "Failed to create empty table: %s.%s", namespaceName, tableName);
     }
-  }
-
-  // Removed: dropTable(DropTableRequest) - using default implementation from interface
-
-  @Override
-  public void tableExists(TableExistsRequest request) {
-    validateTableId(request.getId());
-    String namespaceName = request.getId().get(0);
-    String tableName = request.getId().get(1);
-
-    Table table = getGlueTableAtVersion(namespaceName, tableName, request.getVersion());
-    ensureLanceTable(table);
   }
 
   private void validateParent(List<String> id) {
