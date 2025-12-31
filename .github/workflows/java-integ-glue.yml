@@ -19,7 +19,7 @@ on:
     paths:
       - java/lance-namespace-glue/**
       - .github/workflows/java-integ-glue.yml
-  pull_request:
+  pull_request_target:
     types:
       - opened
       - synchronize
@@ -38,35 +38,22 @@ jobs:
   integration-test:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # Only run if AWS credentials are available
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
-      - name: Check AWS credentials
-        id: check-creds
-        run: |
-          if [ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" ] && [ -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
-            echo "has_creds=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_creds=false" >> $GITHUB_OUTPUT
-            echo "AWS credentials not configured - skipping integration tests"
-          fi
       - name: Checkout
-        if: steps.check-creds.outputs.has_creds == 'true'
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Set up JDK 17
-        if: steps.check-creds.outputs.has_creds == 'true'
         uses: actions/setup-java@v4
         with:
           java-version: "17"
           distribution: "temurin"
           cache: "maven"
       - name: Build
-        if: steps.check-creds.outputs.has_creds == 'true'
         run: make build-java
       - name: Run integration tests
-        if: steps.check-creds.outputs.has_creds == 'true'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+          AWS_REGION: us-east-1
         run: make java-integ-test-glue
