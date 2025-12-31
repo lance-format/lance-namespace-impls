@@ -159,4 +159,4 @@ integ-test-iceberg:
 
 .PHONY: integ-test-unity
 integ-test-unity:
-	./mvnw test -pl lance-namespace-unity -Dtest="*IntegrationTest" -DfailIfNoTests=false
+	./mvnw test -pl lance-namespace-unity -Dtest="*Integration" -DfailIfNoTests=false

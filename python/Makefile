@@ -67,8 +67,8 @@ test-unity:
 
 .PHONY: lint-iceberg
 lint-iceberg:
-	uv run ruff check src/lance_namespace_impls/iceberg.py
-	uv run ruff format --check src/lance_namespace_impls/iceberg.py
+	uv run ruff check src/lance_namespace_impls/iceberg.py tests/test_iceberg.py tests/test_iceberg_integration.py
+	uv run ruff format --check src/lance_namespace_impls/iceberg.py tests/test_iceberg.py tests/test_iceberg_integration.py
 
 .PHONY: install-iceberg
 install-iceberg:
