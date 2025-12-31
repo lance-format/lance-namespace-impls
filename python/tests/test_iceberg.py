@@ -36,10 +36,10 @@ class TestIcebergNamespaceConfig(unittest.TestCase):
     def test_config_initialization(self):
         """Test configuration initialization with required properties."""
         properties = {
-            "iceberg.endpoint": "https://iceberg.example.com",
-            "iceberg.root": "/data/lance",
-            "iceberg.auth_token": "test_token",
-            "iceberg.warehouse": "test_warehouse",
+            "endpoint": "https://iceberg.example.com",
+            "root": "/data/lance",
+            "auth_token": "test_token",
+            "warehouse": "test_warehouse",
         }
 
         config = IcebergNamespaceConfig(properties)
@@ -51,11 +51,13 @@ class TestIcebergNamespaceConfig(unittest.TestCase):
 
     def test_config_defaults(self):
         """Test configuration with default values."""
-        properties = {"iceberg.endpoint": "https://iceberg.example.com"}
+        import os
+
+        properties = {"endpoint": "https://iceberg.example.com"}
 
         config = IcebergNamespaceConfig(properties)
 
-        self.assertEqual(config.root, "/tmp/lance")
+        self.assertEqual(config.root, os.getcwd())
         self.assertIsNone(config.auth_token)
         self.assertIsNone(config.warehouse)
         self.assertEqual(config.connect_timeout, 10000)
@@ -69,11 +71,11 @@ class TestIcebergNamespaceConfig(unittest.TestCase):
         with self.assertRaises(ValueError) as context:
             IcebergNamespaceConfig(properties)
 
-        self.assertIn("iceberg.endpoint", str(context.exception))
+        self.assertIn("endpoint", str(context.exception))
 
     def test_get_base_api_url(self):
         """Test API URL generation."""
-        properties = {"iceberg.endpoint": "https://iceberg.example.com/"}
+        properties = {"endpoint": "https://iceberg.example.com/"}
         config = IcebergNamespaceConfig(properties)
 
         self.assertEqual(config.get_base_api_url(), "https://iceberg.example.com")
@@ -85,8 +87,8 @@ class TestIcebergNamespace(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.properties = {
-            "iceberg.endpoint": "https://iceberg.example.com",
-            "iceberg.root": "/data/lance",
+            "endpoint": "https://iceberg.example.com",
+            "root": "/data/lance",
         }
 
     @patch("lance_namespace_impls.iceberg.RestClient")

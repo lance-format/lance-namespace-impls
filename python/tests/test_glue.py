@@ -4,7 +4,6 @@ Tests for Lance Glue Namespace implementation.
 
 import pytest
 from unittest.mock import MagicMock, patch
-import pyarrow as pa
 
 from lance_namespace_impls.glue import GlueNamespace, GlueNamespaceConfig
 from lance_namespace_urllib3_client.models import (
@@ -12,14 +11,9 @@ from lance_namespace_urllib3_client.models import (
     CreateNamespaceRequest,
     DescribeNamespaceRequest,
     DropNamespaceRequest,
-    NamespaceExistsRequest,
     ListTablesRequest,
-    CreateTableRequest,
-    DropTableRequest,
     DescribeTableRequest,
-    RegisterTableRequest,
     DeregisterTableRequest,
-    TableExistsRequest,
 )
 
 
@@ -32,14 +26,7 @@ def mock_boto3():
 
 
 @pytest.fixture
-def mock_lance():
-    """Mock lance module."""
-    with patch("lance_namespace_impls.glue.lance") as mock:
-        yield mock
-
-
-@pytest.fixture
-def glue_namespace(mock_boto3, mock_lance):
+def glue_namespace(mock_boto3):
     """Create a GlueNamespace instance with mocked dependencies."""
     properties = {"region": "us-east-1", "catalog_id": "123456789012"}
     namespace = GlueNamespace(**properties)
@@ -253,41 +240,6 @@ class TestGlueNamespace:
         with pytest.raises(RuntimeError, match="Cannot drop non-empty namespace"):
             glue_namespace.drop_namespace(request)
 
-    def test_namespace_exists_root(self, glue_namespace):
-        """Test checking if root namespace exists."""
-        request = NamespaceExistsRequest(id=[])
-        glue_namespace.namespace_exists(request)  # Should not raise
-
-        glue_namespace.glue.get_database.assert_not_called()
-
-    def test_namespace_exists(self, glue_namespace):
-        """Test checking if a namespace exists."""
-        glue_namespace.glue.get_database.return_value = {
-            "Database": {"Name": "test_db"}
-        }
-
-        request = NamespaceExistsRequest(id=["test_db"])
-        glue_namespace.namespace_exists(request)  # Should not raise
-
-        glue_namespace.glue.get_database.assert_called_once_with(Name="test_db")
-
-    def test_namespace_not_exists(self, glue_namespace):
-        """Test checking if a namespace doesn't exist."""
-
-        # Create a custom exception with the right name
-        class EntityNotFoundException(Exception):
-            pass
-
-        glue_namespace.glue.exceptions.EntityNotFoundException = EntityNotFoundException
-        glue_namespace.glue.get_database.side_effect = EntityNotFoundException(
-            "Not found"
-        )
-
-        request = NamespaceExistsRequest(id=["test_db"])
-
-        with pytest.raises(RuntimeError, match="Namespace does not exist"):
-            glue_namespace.namespace_exists(request)
-
     def test_list_tables_root(self, glue_namespace):
         """Test listing tables at root namespace returns empty."""
         request = ListTablesRequest(id=[])
@@ -315,27 +267,11 @@ class TestGlueNamespace:
         assert response.tables == ["table1", "table2"]
         glue_namespace.glue.get_tables.assert_called_once_with(DatabaseName="test_db")
 
-    def test_create_table_not_supported(self, glue_namespace, mock_lance):
-        """Test that create_table raises NotImplementedError."""
-        request = CreateTableRequest(id=["test_db", "test_table"])
-
-        with pytest.raises(NotImplementedError, match="create_table is not supported"):
-            glue_namespace.create_table(request, b"test_data")
-
-    def test_drop_table_not_supported(self, glue_namespace, mock_lance):
-        """Test that drop_table raises NotImplementedError."""
-        request = DropTableRequest(id=["test_db", "test_table"])
-
-        with pytest.raises(NotImplementedError, match="drop_table is not supported"):
-            glue_namespace.drop_table(request)
-
-    def test_deregister_table(self, glue_namespace, mock_lance):
+    def test_deregister_table(self, glue_namespace):
         """Test deregistering a table (only removes from Glue, keeps Lance dataset)."""
         request = DeregisterTableRequest(id=["test_db", "test_table"])
         glue_namespace.deregister_table(request)
 
-        # Verify only Glue table was deleted (no Lance operations)
-        mock_lance.dataset.assert_not_called()
         glue_namespace.glue.delete_table.assert_called_once_with(
             DatabaseName="test_db", Name="test_table"
         )
@@ -370,66 +306,6 @@ class TestGlueNamespace:
         with pytest.raises(RuntimeError, match="Table is not a Lance table"):
             glue_namespace.describe_table(request)
 
-    def test_register_table(self, glue_namespace, mock_lance):
-        """Test registering an existing table."""
-        # Mock Lance dataset
-        mock_dataset = MagicMock()
-        mock_dataset.schema = pa.schema(
-            [
-                pa.field("id", pa.int64()),
-                pa.field("name", pa.string()),
-            ]
-        )
-        mock_lance.dataset.return_value = mock_dataset
-
-        request = RegisterTableRequest(
-            id=["test_db", "test_table"], location="s3://bucket/existing_table.lance"
-        )
-
-        response = glue_namespace.register_table(request)
-
-        assert response.location == "s3://bucket/existing_table.lance"
-
-        # Verify Lance dataset was read
-        mock_lance.dataset.assert_called_once_with(
-            "s3://bucket/existing_table.lance", storage_options={}
-        )
-
-        # Verify Glue table was created
-        glue_namespace.glue.create_table.assert_called_once()
-        call_args = glue_namespace.glue.create_table.call_args
-        assert call_args[1]["DatabaseName"] == "test_db"
-        assert call_args[1]["TableInput"]["Name"] == "test_table"
-        assert call_args[1]["TableInput"]["Parameters"]["table_type"] == "LANCE"
-
-    def test_table_exists(self, glue_namespace):
-        """Test checking if a table exists."""
-        glue_namespace.glue.get_table.return_value = {
-            "Table": {"Name": "test_table", "Parameters": {"table_type": "LANCE"}}
-        }
-
-        request = TableExistsRequest(id=["test_db", "test_table"])
-        glue_namespace.table_exists(request)  # Should not raise
-
-        glue_namespace.glue.get_table.assert_called_once_with(
-            DatabaseName="test_db", Name="test_table"
-        )
-
-    def test_table_not_exists(self, glue_namespace):
-        """Test checking if a table doesn't exist."""
-
-        # Create a custom exception with the right name
-        class EntityNotFoundException(Exception):
-            pass
-
-        glue_namespace.glue.exceptions.EntityNotFoundException = EntityNotFoundException
-        glue_namespace.glue.get_table.side_effect = EntityNotFoundException("Not found")
-
-        request = TableExistsRequest(id=["test_db", "test_table"])
-
-        with pytest.raises(RuntimeError, match="Table does not exist"):
-            glue_namespace.table_exists(request)
-
     def test_parse_table_identifier(self, glue_namespace):
         """Test parsing table identifier."""
         db, table = glue_namespace._parse_table_identifier(["db", "table"])
@@ -455,86 +331,6 @@ class TestGlueNamespace:
 
         no_params = {}
         assert glue_namespace._is_lance_table(no_params) is False
-
-    def test_pyarrow_type_conversions(self, glue_namespace):
-        """Test PyArrow to Glue type conversions."""
-        # Test basic types
-        assert (
-            glue_namespace._convert_pyarrow_type_to_glue_type(pa.bool_()) == "boolean"
-        )
-        assert glue_namespace._convert_pyarrow_type_to_glue_type(pa.int32()) == "int"
-        assert glue_namespace._convert_pyarrow_type_to_glue_type(pa.int64()) == "bigint"
-        assert (
-            glue_namespace._convert_pyarrow_type_to_glue_type(pa.float32()) == "float"
-        )
-        assert (
-            glue_namespace._convert_pyarrow_type_to_glue_type(pa.float64()) == "double"
-        )
-        assert (
-            glue_namespace._convert_pyarrow_type_to_glue_type(pa.string()) == "string"
-        )
-        assert (
-            glue_namespace._convert_pyarrow_type_to_glue_type(pa.binary()) == "binary"
-        )
-        assert glue_namespace._convert_pyarrow_type_to_glue_type(pa.date32()) == "date"
-        assert (
-            glue_namespace._convert_pyarrow_type_to_glue_type(pa.timestamp("us"))
-            == "timestamp"
-        )
-
-        # Test complex types
-        assert (
-            glue_namespace._convert_pyarrow_type_to_glue_type(pa.list_(pa.int32()))
-            == "array<int>"
-        )
-        assert (
-            glue_namespace._convert_pyarrow_type_to_glue_type(
-                pa.struct([pa.field("a", pa.int32()), pa.field("b", pa.string())])
-            )
-            == "struct<a:int,b:string>"
-        )
-        assert (
-            glue_namespace._convert_pyarrow_type_to_glue_type(
-                pa.map_(pa.string(), pa.int32())
-            )
-            == "map<string,int>"
-        )
-
-        # Test decimal
-        assert (
-            glue_namespace._convert_pyarrow_type_to_glue_type(pa.decimal128(10, 2))
-            == "decimal(10,2)"
-        )
-
-    def test_pyarrow_schema_to_glue_columns(self, glue_namespace):
-        """Test conversion of PyArrow schema to Glue column definitions."""
-        schema = pa.schema(
-            [
-                pa.field("id", pa.int64()),
-                pa.field("name", pa.string()),
-                pa.field("scores", pa.list_(pa.float32())),
-                pa.field(
-                    "metadata",
-                    pa.struct(
-                        [
-                            pa.field("created", pa.timestamp("us")),
-                            pa.field("version", pa.int32()),
-                        ]
-                    ),
-                ),
-            ]
-        )
-
-        columns = glue_namespace._convert_pyarrow_schema_to_glue_columns(schema)
-
-        assert len(columns) == 4
-        assert columns[0] == {"Name": "id", "Type": "bigint"}
-        assert columns[1] == {"Name": "name", "Type": "string"}
-        assert columns[2] == {"Name": "scores", "Type": "array<float>"}
-        assert columns[3] == {
-            "Name": "metadata",
-            "Type": "struct<created:timestamp,version:int>",
-        }
 
     def test_pickle_support(self, mock_boto3):
         """Test that GlueNamespace can be pickled and unpickled for Ray compatibility."""

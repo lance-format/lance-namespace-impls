@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 
 dependencies = [
     "pylance>=0.26.0",
-    "lance-namespace-urllib3-client>=0.0.21",
+    "lance-namespace-urllib3-client>=0.4.2",
     "pyarrow>=15.0.0",
     "typing-extensions>=4.5.0",
 ]

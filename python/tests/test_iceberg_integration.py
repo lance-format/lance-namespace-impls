@@ -70,8 +70,8 @@ class TestIcebergNamespaceIntegration(unittest.TestCase):
         self.test_namespace = f"test_ns_{unique_id}"
 
         properties = {
-            "iceberg.endpoint": ICEBERG_ENDPOINT,
-            "iceberg.root": "s3://warehouse",
+            "endpoint": ICEBERG_ENDPOINT,
+            "root": "s3://warehouse",
         }
 
         self.namespace = IcebergNamespace(**properties)
