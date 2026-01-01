@@ -42,7 +42,7 @@ build-hive2:
 
 .PHONY: test-hive2
 test-hive2:
-	./mvnw test -pl lance-namespace-hive2 -Dtest="!*IntegrationTest"
+	./mvnw test -pl lance-namespace-hive2 -Dtest="!*Integration"
 
 # ============================================================================
 # Hive3
@@ -59,7 +59,7 @@ build-hive3:
 
 .PHONY: test-hive3
 test-hive3:
-	./mvnw test -pl lance-namespace-hive3 -Dtest="!*IntegrationTest"
+	./mvnw test -pl lance-namespace-hive3 -Dtest="!*Integration"
 
 # ============================================================================
 # Iceberg
@@ -76,7 +76,7 @@ build-iceberg:
 
 .PHONY: test-iceberg
 test-iceberg:
-	./mvnw test -pl lance-namespace-iceberg -Dtest="!*IntegrationTest"
+	./mvnw test -pl lance-namespace-iceberg -Dtest="!*Integration"
 
 # ============================================================================
 # Polaris
@@ -93,7 +93,7 @@ build-polaris:
 
 .PHONY: test-polaris
 test-polaris:
-	./mvnw test -pl lance-namespace-polaris -Dtest="!*IntegrationTest"
+	./mvnw test -pl lance-namespace-polaris -Dtest="!*Integration"
 
 # ============================================================================
 # Unity
@@ -110,7 +110,7 @@ build-unity:
 
 .PHONY: test-unity
 test-unity:
-	./mvnw test -pl lance-namespace-unity -Dtest="!*IntegrationTest"
+	./mvnw test -pl lance-namespace-unity -Dtest="!*Integration"
 
 # ============================================================================
 # All

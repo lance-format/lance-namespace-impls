@@ -39,7 +39,6 @@ class TestIcebergNamespaceConfig(unittest.TestCase):
             "endpoint": "https://iceberg.example.com",
             "root": "/data/lance",
             "auth_token": "test_token",
-            "warehouse": "test_warehouse",
         }
 
         config = IcebergNamespaceConfig(properties)
@@ -47,7 +46,6 @@ class TestIcebergNamespaceConfig(unittest.TestCase):
         self.assertEqual(config.endpoint, "https://iceberg.example.com")
         self.assertEqual(config.root, "/data/lance")
         self.assertEqual(config.auth_token, "test_token")
-        self.assertEqual(config.warehouse, "test_warehouse")
 
     def test_config_defaults(self):
         """Test configuration with default values."""
@@ -59,7 +57,6 @@ class TestIcebergNamespaceConfig(unittest.TestCase):
 
         self.assertEqual(config.root, os.getcwd())
         self.assertIsNone(config.auth_token)
-        self.assertIsNone(config.warehouse)
         self.assertEqual(config.connect_timeout, 10000)
         self.assertEqual(config.read_timeout, 30000)
         self.assertEqual(config.max_retries, 3)

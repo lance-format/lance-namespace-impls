@@ -212,7 +212,7 @@ wheels = [
 
 [[package]]
 name = "lance-namespace-impls"
-version = "0.0.1"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "lance-namespace-urllib3-client" },

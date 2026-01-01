@@ -137,11 +137,13 @@ public class TestGlueNamespaceIntegration {
   @AfterEach
   public void tearDown() {
     // Clean up test resources
-    for (String dbName : createdDatabases) {
-      try {
-        cleanupDatabase(dbName);
-      } catch (Exception e) {
-        // Ignore cleanup errors
+    if (createdDatabases != null) {
+      for (String dbName : createdDatabases) {
+        try {
+          cleanupDatabase(dbName);
+        } catch (Exception e) {
+          // Ignore cleanup errors
+        }
       }
     }
 
