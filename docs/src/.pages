@@ -1,4 +1,5 @@
 nav:
+  - Introduction: index.md
   - Apache Gravitino: gravitino.md
   - Apache Hive MetaStore V2: hive2.md
   - Apache Hive MetaStore V3: hive3.md
