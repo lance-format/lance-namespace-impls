@@ -1,12 +1,12 @@
-# Lance Polaris Namespace Implementation Spec
+# Apache Polaris Lance Namespace Implementation Spec
 
 This document describes how the Polaris Catalog implements the Lance Namespace client spec.
 
 ## Background
 
-Apache Polaris is an open-source catalog implementation for Apache Iceberg that provides a REST API for managing tables and namespaces. Polaris supports the Generic Table API which allows registering non-Iceberg table formats. For details on Polaris Catalog, see the [Polaris Catalog Documentation](https://polaris.apache.org).
-
-**Note:** The Generic Table API is available in Polaris 1.2.0-incubating and later versions. Ensure your Polaris deployment is running a compatible version.
+Apache Polaris is an open-source catalog implementation for Apache Iceberg that provides a REST API for managing tables and namespaces. 
+Polaris supports the Generic Table API which allows registering non-Iceberg table formats. 
+For details on Polaris Catalog, see the [Polaris Catalog Documentation](https://polaris.apache.org).
 
 ## Namespace Implementation Configuration Properties
 
@@ -24,13 +24,11 @@ The **max_retries** property is optional and specifies the maximum number of ret
 
 ## Object Mapping
 
-### Catalog
-
-The **catalog** is the first element of any namespace or table identifier. It determines which Polaris catalog the operations target.
-
 ### Namespace
 
-The **root namespace** is represented by specifying only the catalog in the identifier (e.g., `["my-catalog"]`). This lists all top-level namespaces under that catalog.
+The **root namespace** (empty identifier) represents the Polaris server itself.
+
+The **catalog** is the first level of the namespace hierarchy. It determines which Polaris catalog the operations target. A single-element identifier (e.g., `["my-catalog"]`) lists all top-level namespaces under that catalog.
 
 A **child namespace** is a nested namespace in Polaris. Polaris supports arbitrary nesting depth. The **namespace identifier** format is `[catalog, namespace1, namespace2, ...]` (e.g., `["my-catalog", "schema", "subschema"]`).
 
@@ -68,7 +66,11 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace already exists, return error code `2` (NamespaceAlreadyExists). If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the namespace already exists, return error code `2` (NamespaceAlreadyExists).
+
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### ListNamespaces
 
@@ -84,7 +86,9 @@ The implementation:
 
 **Error Handling:**
 
-If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DescribeNamespace
 
@@ -99,7 +103,9 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DropNamespace
 
@@ -138,7 +144,11 @@ The implementation:
 
 **Error Handling:**
 
-If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the table already exists, return error code `5` (TableAlreadyExists). If the server returns an error, return error code `18` (Internal).
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the table already exists, return error code `5` (TableAlreadyExists).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### ListTables
 
@@ -153,7 +163,9 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DescribeTable
 
@@ -187,4 +199,6 @@ The implementation:
 
 **Error Handling:**
 
-If the table does not exist, return error code `4` (TableNotFound). If the server returns an error, return error code `18` (Internal).
+If the table does not exist, return error code `4` (TableNotFound).
+
+If the server returns an error, return error code `18` (Internal).

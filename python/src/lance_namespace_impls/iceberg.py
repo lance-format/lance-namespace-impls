@@ -55,7 +55,6 @@ class IcebergNamespaceConfig:
     """Configuration for Iceberg REST Catalog namespace."""
 
     ENDPOINT = "endpoint"
-    WAREHOUSE = "warehouse"
     AUTH_TOKEN = "auth_token"
     CREDENTIAL = "credential"
     CONNECT_TIMEOUT = "connect_timeout"
@@ -64,7 +63,6 @@ class IcebergNamespaceConfig:
     ROOT = "root"
 
     endpoint: str
-    warehouse: Optional[str] = None
     auth_token: Optional[str] = None
     credential: Optional[str] = None
     connect_timeout: int = 10000
@@ -79,7 +77,6 @@ class IcebergNamespaceConfig:
         if not self.endpoint:
             raise ValueError(f"Required property {self.ENDPOINT} is not set")
 
-        self.warehouse = properties.get(self.WAREHOUSE)
         self.auth_token = properties.get(self.AUTH_TOKEN)
         self.credential = properties.get(self.CREDENTIAL)
         self.connect_timeout = int(properties.get(self.CONNECT_TIMEOUT, "10000"))
@@ -125,8 +122,6 @@ class IcebergNamespace(LanceNamespace):
         headers = {}
         if self.config.auth_token:
             headers["Authorization"] = f"Bearer {self.config.auth_token}"
-        if self.config.warehouse:
-            headers["X-Iceberg-Access-Delegation"] = "vended-credentials"
 
         self.rest_client = RestClient(
             base_url=self.config.get_base_api_url(),

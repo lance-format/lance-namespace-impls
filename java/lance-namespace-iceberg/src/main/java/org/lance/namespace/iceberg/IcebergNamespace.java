@@ -102,9 +102,6 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
     if (config.getAuthToken() != null) {
       clientBuilder.authToken(config.getAuthToken());
     }
-    if (config.getWarehouse() != null) {
-      clientBuilder.header("X-Iceberg-Access-Delegation", "vended-credentials");
-    }
 
     this.restClient = clientBuilder.build();
     LOG.info("Initialized Iceberg namespace with endpoint: {}", config.getEndpoint());

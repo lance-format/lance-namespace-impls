@@ -55,7 +55,11 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace already exists and mode is CREATE, return error code `2` (NamespaceAlreadyExists). If the parent catalog does not exist when creating a database, return error code `1` (NamespaceNotFound). If the HMS connection fails, return error code `17` (ServiceUnavailable).
+If the namespace already exists and mode is CREATE, return error code `2` (NamespaceAlreadyExists).
+
+If the parent catalog does not exist when creating a database, return error code `1` (NamespaceNotFound).
+
+If the HMS connection fails, return error code `17` (ServiceUnavailable).
 
 ### ListNamespaces
 
@@ -70,7 +74,9 @@ The implementation:
 
 **Error Handling:**
 
-If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the HMS connection fails, return error code `17` (ServiceUnavailable).
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the HMS connection fails, return error code `17` (ServiceUnavailable).
 
 ### DescribeNamespace
 
@@ -84,7 +90,9 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the HMS connection fails, return error code `17` (ServiceUnavailable).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the HMS connection fails, return error code `17` (ServiceUnavailable).
 
 ### DropNamespace
 
@@ -120,7 +128,11 @@ The implementation:
 
 **Error Handling:**
 
-If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the table already exists, return error code `5` (TableAlreadyExists). If the HMS connection fails, return error code `17` (ServiceUnavailable).
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the table already exists, return error code `5` (TableAlreadyExists).
+
+If the HMS connection fails, return error code `17` (ServiceUnavailable).
 
 ### ListTables
 
@@ -136,7 +148,9 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the HMS connection fails, return error code `17` (ServiceUnavailable).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the HMS connection fails, return error code `17` (ServiceUnavailable).
 
 ### DescribeTable
 
@@ -169,4 +183,8 @@ The implementation:
 
 **Error Handling:**
 
-If the table does not exist, return error code `4` (TableNotFound). If the table is not a Lance table, return error code `13` (InvalidInput). If the HMS connection fails, return error code `17` (ServiceUnavailable).
+If the table does not exist, return error code `4` (TableNotFound).
+
+If the table is not a Lance table, return error code `13` (InvalidInput).
+
+If the HMS connection fails, return error code `17` (ServiceUnavailable).

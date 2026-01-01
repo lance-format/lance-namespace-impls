@@ -1,4 +1,4 @@
-# Lance Iceberg REST Catalog Implementation Spec
+#  Apache Iceberg REST Catalog Lance Namespace Implementation Spec
 
 This document describes how the Apache Iceberg REST Catalog implements the Lance Namespace client spec.
 
@@ -11,8 +11,6 @@ Apache Iceberg REST Catalog is a standardized REST API for interacting with Iceb
 The Lance Iceberg REST Catalog namespace implementation accepts the following configuration properties:
 
 The **endpoint** property is required and specifies the Iceberg REST Catalog server endpoint URL (e.g., `http://localhost:8181`). Must start with `http://` or `https://`.
-
-The **warehouse** property is optional and specifies the warehouse identifier. Some Iceberg REST implementations require this. The warehouse name is resolved to an API prefix via the `/v1/config` endpoint.
 
 The **auth_token** property is optional and specifies the bearer token for authentication.
 
@@ -28,13 +26,11 @@ The **root** property is optional and specifies the default storage root locatio
 
 ## Object Mapping
 
-### Warehouse
-
-The **warehouse** is the first element of any namespace or table identifier. The implementation caches the warehouse to config mapping by calling the `/v1/config?warehouse={warehouse}` endpoint. If the config response contains a `prefix` in the defaults, that prefix is used for API paths; otherwise, the warehouse name itself is used as the prefix.
-
 ### Namespace
 
-The **root namespace** is represented by specifying only the warehouse in the identifier (e.g., `["my-warehouse"]`). This lists all top-level namespaces under that warehouse.
+The **root namespace** (empty identifier) represents the Iceberg REST Catalog server itself.
+
+The **warehouse** is the first level of the namespace hierarchy. The implementation caches the warehouse to config mapping by calling the `/v1/config?warehouse={warehouse}` endpoint. If the config response contains a `prefix` in the defaults, that prefix is used for API paths; otherwise, the warehouse name itself is used as the prefix. A single-element identifier (e.g., `["my-warehouse"]`) lists all top-level namespaces under that warehouse.
 
 A **child namespace** is a nested namespace in Iceberg. Iceberg supports arbitrary nesting depth. The **namespace identifier** format is `[warehouse, namespace1, namespace2, ...]` (e.g., `["my-warehouse", "level1", "level2"]`).
 
@@ -73,7 +69,11 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace already exists, return error code `2` (NamespaceAlreadyExists). If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the namespace already exists, return error code `2` (NamespaceAlreadyExists).
+
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### ListNamespaces
 
@@ -89,7 +89,9 @@ The implementation:
 
 **Error Handling:**
 
-If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DescribeNamespace
 
@@ -105,7 +107,9 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DropNamespace
 
@@ -146,7 +150,11 @@ The implementation:
 
 **Error Handling:**
 
-If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the table already exists, return error code `5` (TableAlreadyExists). If the server returns an error, return error code `18` (Internal).
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the table already exists, return error code `5` (TableAlreadyExists).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### ListTables
 
@@ -163,7 +171,9 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DescribeTable
 
@@ -201,4 +211,6 @@ The implementation:
 
 **Error Handling:**
 
-If the table does not exist, return error code `4` (TableNotFound). If the server returns an error, return error code `18` (Internal).
+If the table does not exist, return error code `4` (TableNotFound).
+
+If the server returns an error, return error code `18` (Internal).

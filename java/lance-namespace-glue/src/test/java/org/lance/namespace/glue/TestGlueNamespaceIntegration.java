@@ -13,7 +13,6 @@
  */
 package org.lance.namespace.glue;
 
-import org.lance.namespace.errors.LanceNamespaceException;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
 import org.lance.namespace.model.DeclareTableRequest;
@@ -28,8 +27,6 @@ import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
-import org.lance.namespace.model.NamespaceExistsRequest;
-import org.lance.namespace.model.TableExistsRequest;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
@@ -48,7 +45,6 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Integration tests for GlueNamespace against a real AWS Glue catalog.
@@ -219,11 +215,6 @@ public class TestGlueNamespaceIntegration {
     assertThat(describeResponse.getProperties())
         .containsEntry("description", "Test database for Lance");
 
-    // Check namespace exists
-    NamespaceExistsRequest existsRequest = new NamespaceExistsRequest();
-    existsRequest.setId(Collections.singletonList(dbName));
-    namespace.namespaceExists(existsRequest); // Should not throw
-
     // List namespaces
     ListNamespacesRequest listRequest = new ListNamespacesRequest();
     listRequest.setId(Collections.emptyList());
@@ -235,10 +226,6 @@ public class TestGlueNamespaceIntegration {
     dropRequest.setId(Collections.singletonList(dbName));
     namespace.dropNamespace(dropRequest);
     createdDatabases.remove(dbName);
-
-    // Verify namespace doesn't exist
-    assertThatThrownBy(() -> namespace.namespaceExists(existsRequest))
-        .isInstanceOf(LanceNamespaceException.class);
   }
 
   @Test
@@ -264,11 +251,6 @@ public class TestGlueNamespaceIntegration {
     assertThat(describeResponse.getLocation()).isNotNull();
     assertThat(describeResponse.getLocation()).isEqualTo(tableLocation);
 
-    // Check table exists
-    TableExistsRequest existsRequest = new TableExistsRequest();
-    existsRequest.setId(Arrays.asList(dbName, tableName));
-    namespace.tableExists(existsRequest); // Should not throw
-
     // List tables
     ListTablesRequest listRequest = new ListTablesRequest();
     listRequest.setId(Collections.singletonList(dbName));
@@ -280,10 +262,6 @@ public class TestGlueNamespaceIntegration {
     DeregisterTableRequest deregisterRequest = new DeregisterTableRequest();
     deregisterRequest.setId(Arrays.asList(dbName, tableName));
     namespace.deregisterTable(deregisterRequest);
-
-    // Verify table doesn't exist
-    assertThatThrownBy(() -> namespace.tableExists(existsRequest))
-        .isInstanceOf(LanceNamespaceException.class);
   }
 
   @Test

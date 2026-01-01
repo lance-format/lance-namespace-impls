@@ -1,4 +1,4 @@
-# Lance OneLake Namespace
+# Azure OneLake Table API
 
 **Microsoft OneLake** is a unified, logical data lake for Microsoft Fabric that provides a single SaaS experience and a tenant-wide store for data that serves both professional and citizen data integration needs.
 
