@@ -20,8 +20,6 @@ import org.lance.namespace.errors.NamespaceAlreadyExistsException;
 import org.lance.namespace.errors.NamespaceNotFoundException;
 import org.lance.namespace.errors.TableAlreadyExistsException;
 import org.lance.namespace.errors.TableNotFoundException;
-import org.lance.namespace.model.CreateEmptyTableRequest;
-import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
 import org.lance.namespace.model.DeclareTableRequest;
@@ -65,14 +63,16 @@ import java.util.stream.Collectors;
 /**
  * Iceberg REST Catalog namespace implementation for Lance.
  *
- * <p>The prefix (warehouse) is included in the namespace identifier:
+ * <p>The warehouse is the first element of the namespace/table identifier:
  *
  * <ul>
- *   <li>Namespace ID format: [prefix, namespace1, namespace2, ...]
- *   <li>Table ID format: [prefix, namespace1, namespace2, ..., table_name]
+ *   <li>Namespace ID format: [warehouse, namespace1, namespace2, ...]
+ *   <li>Table ID format: [warehouse, namespace1, namespace2, ..., table_name]
  * </ul>
  *
- * <p>This is consistent with how Polaris handles catalog names.
+ * <p>The implementation caches warehouse -&gt; config mappings by calling
+ * /v1/config?warehouse={warehouse}. If the config contains a prefix, that prefix is used for API
+ * paths; otherwise, the warehouse name is used.
  */
 public class IcebergNamespace implements LanceNamespace, Closeable {
   private static final Logger LOG = LoggerFactory.getLogger(IcebergNamespace.class);
@@ -153,8 +153,7 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
             ? ObjectIdentifier.of(request.getId())
             : ObjectIdentifier.of(Collections.emptyList());
 
-    ValidationUtil.checkArgument(
-        nsId.levels() >= 1, "Must specify at least the prefix (warehouse)");
+    ValidationUtil.checkArgument(nsId.levels() >= 1, "Must specify at least the warehouse");
 
     try {
       String prefix = nsId.levelAtListPos(0);
@@ -302,7 +301,8 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
   @Override
   public ListTablesResponse listTables(ListTablesRequest request) {
     ObjectIdentifier nsId = ObjectIdentifier.of(request.getId());
-    ValidationUtil.checkArgument(nsId.levels() >= 2, "Must specify at least prefix and namespace");
+    ValidationUtil.checkArgument(
+        nsId.levels() >= 2, "Must specify at least warehouse and namespace");
 
     try {
       String prefix = nsId.levelAtListPos(0);
@@ -397,21 +397,6 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
       }
       throw new InternalException("Failed to declare table: " + e.getMessage());
     }
-  }
-
-  /**
-   * @deprecated Use {@link #declareTable(DeclareTableRequest)} instead.
-   */
-  @Deprecated
-  @Override
-  public CreateEmptyTableResponse createEmptyTable(CreateEmptyTableRequest request) {
-    DeclareTableRequest declareRequest = new DeclareTableRequest();
-    declareRequest.setId(request.getId());
-    declareRequest.setLocation(request.getLocation());
-    DeclareTableResponse response = declareTable(declareRequest);
-    CreateEmptyTableResponse result = new CreateEmptyTableResponse();
-    result.setLocation(response.getLocation());
-    return result;
   }
 
   @Override

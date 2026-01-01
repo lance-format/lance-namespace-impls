@@ -47,7 +47,11 @@ public class GlueNamespaceConfig implements Serializable {
    */
   public static final String ENDPOINT = "endpoint";
 
-  /** Configure the AWS region for all Glue operations */
+  /**
+   * Configure the AWS region for all Glue operations.
+   *
+   * <p>When not specified, it is resolved to the default AWS region in the caller's environment.
+   */
   public static final String REGION = "region";
 
   /**

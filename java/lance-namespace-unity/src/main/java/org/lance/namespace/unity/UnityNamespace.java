@@ -20,10 +20,10 @@ import org.lance.namespace.errors.NamespaceAlreadyExistsException;
 import org.lance.namespace.errors.NamespaceNotFoundException;
 import org.lance.namespace.errors.TableAlreadyExistsException;
 import org.lance.namespace.errors.TableNotFoundException;
-import org.lance.namespace.model.CreateEmptyTableRequest;
-import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeclareTableRequest;
+import org.lance.namespace.model.DeclareTableResponse;
 import org.lance.namespace.model.DeregisterTableRequest;
 import org.lance.namespace.model.DeregisterTableResponse;
 import org.lance.namespace.model.DescribeNamespaceRequest;
@@ -306,7 +306,7 @@ public class UnityNamespace implements LanceNamespace, Closeable {
   }
 
   @Override
-  public CreateEmptyTableResponse createEmptyTable(CreateEmptyTableRequest request) {
+  public DeclareTableResponse declareTable(DeclareTableRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
         tableId.levels() == 3, "Expect a 3-level table identifier but get %s", tableId);
@@ -317,7 +317,7 @@ public class UnityNamespace implements LanceNamespace, Closeable {
 
     if (!catalog.equals(config.getCatalog())) {
       throw new InvalidInputException(
-          "Cannot create empty table in catalog. Expected: " + config.getCatalog());
+          "Cannot declare table in catalog. Expected: " + config.getCatalog());
     }
 
     try {
@@ -352,7 +352,7 @@ public class UnityNamespace implements LanceNamespace, Closeable {
       UnityModels.TableInfo tableInfo =
           restClient.post("/tables", createTable, UnityModels.TableInfo.class);
 
-      CreateEmptyTableResponse response = new CreateEmptyTableResponse();
+      DeclareTableResponse response = new DeclareTableResponse();
       response.setLocation(tablePath);
       return response;
 
@@ -361,7 +361,7 @@ public class UnityNamespace implements LanceNamespace, Closeable {
         throw new TableAlreadyExistsException(
             "Table already exists: " + request.getId().toString());
       }
-      throw new InternalException("Failed to create empty table: " + e.getMessage());
+      throw new InternalException("Failed to declare table: " + e.getMessage());
     }
   }
 

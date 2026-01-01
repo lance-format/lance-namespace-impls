@@ -98,9 +98,11 @@ class GlueNamespace(LanceNamespace):
         """Initialize the Glue namespace.
 
         Args:
-            catalog_id: Glue catalog ID (AWS account ID)
+            catalog_id: Glue catalog ID to use as starting point. When not specified,
+                it is resolved to the caller's AWS account ID.
             endpoint: Optional custom Glue endpoint
-            region: AWS region for Glue
+            region: AWS region for Glue. When not specified, it is resolved to the
+                default AWS region in the caller's environment.
             access_key_id: AWS access key ID
             secret_access_key: AWS secret access key
             session_token: AWS session token

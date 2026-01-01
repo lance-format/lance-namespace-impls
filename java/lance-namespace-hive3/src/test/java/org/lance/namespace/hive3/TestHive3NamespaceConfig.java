@@ -57,12 +57,10 @@ public class TestHive3NamespaceConfig {
     Map<String, String> properties =
         ImmutableMap.of(
             "root", "/custom/root",
-            "client.pool-size", "5",
-            "storage.s3.region", "us-west-2");
+            "client.pool-size", "5");
     Hive3NamespaceConfig config = new Hive3NamespaceConfig(properties);
 
     assertEquals("/custom/root", config.getRoot());
     assertEquals(5, config.getClientPoolSize());
-    assertEquals("us-west-2", config.getStorageOptions().get("s3.region"));
   }
 }

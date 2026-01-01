@@ -24,16 +24,17 @@ The **max_retries** property is optional and specifies the maximum number of ret
 
 ## Object Mapping
 
+### Catalog
+
+The **catalog** is the first element of any namespace or table identifier. It determines which Polaris catalog the operations target.
+
 ### Namespace
 
-The **namespace identifier** follows a hierarchical structure where the first level represents the Polaris catalog (warehouse), and subsequent levels represent namespaces within that catalog. For example, `my_catalog.my_schema` refers to namespace `my_schema` in catalog `my_catalog`.
+The **root namespace** is represented by specifying only the catalog in the identifier (e.g., `["my-catalog"]`). This lists all top-level namespaces under that catalog.
 
-A **child namespace** is a nested namespace in Polaris. Polaris supports arbitrary nesting depth, allowing flexible namespace organization within a catalog.
+A **child namespace** is a nested namespace in Polaris. Polaris supports arbitrary nesting depth. The **namespace identifier** format is `[catalog, namespace1, namespace2, ...]` (e.g., `["my-catalog", "schema", "subschema"]`).
 
-The **namespace identifier** is constructed by joining the catalog and namespace levels with the `.` delimiter (e.g., `catalog.schema.subschema`). When making API calls:
-- The catalog is extracted as the first level
-- Remaining levels form the namespace path within that catalog
-- The namespace path is URL-encoded using `.` as the separator
+For API calls, namespace levels (excluding the catalog) are joined with the `.` delimiter. The catalog is used in the API path as `/api/catalog/v1/{catalog}/namespaces`.
 
 **Namespace properties** are stored in the namespace's properties map, returned by the Polaris namespace API.
 
@@ -41,7 +42,7 @@ The **namespace identifier** is constructed by joining the catalog and namespace
 
 A **table** is represented as a [Generic Table](https://github.com/polaris-catalog/polaris/blob/main/spec/polaris-catalog-apis/generic-tables-api.yaml) object in Polaris with `format` set to `lance`.
 
-The **table identifier** is constructed by joining the namespace path and table name with the `.` delimiter (e.g., `catalog.schema.table`).
+The **table identifier** format is `[catalog, namespace1, namespace2, ..., table_name]` (e.g., `["my-catalog", "schema", "my_table"]`).
 
 The **table location** is stored in the `base-location` field of the Generic Table, pointing to the root location of the Lance table.
 

@@ -19,10 +19,10 @@ import org.lance.namespace.errors.InternalException;
 import org.lance.namespace.errors.InvalidInputException;
 import org.lance.namespace.errors.NamespaceNotFoundException;
 import org.lance.namespace.errors.TableNotFoundException;
-import org.lance.namespace.model.CreateEmptyTableRequest;
-import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeclareTableRequest;
+import org.lance.namespace.model.DeclareTableResponse;
 import org.lance.namespace.model.DeregisterTableRequest;
 import org.lance.namespace.model.DeregisterTableResponse;
 import org.lance.namespace.model.DescribeNamespaceRequest;
@@ -286,10 +286,8 @@ public class GlueNamespace implements LanceNamespace, Closeable {
     }
   }
 
-  // Removed: createTable(CreateTableRequest, byte[]) - using default implementation from interface
-
   @Override
-  public CreateEmptyTableResponse createEmptyTable(CreateEmptyTableRequest request) {
+  public DeclareTableResponse declareTable(DeclareTableRequest request) {
     validateTableId(request.getId());
     String namespaceName = request.getId().get(0);
     String tableName = request.getId().get(1);
@@ -319,7 +317,7 @@ public class GlueNamespace implements LanceNamespace, Closeable {
               .tableInput(tableInput)
               .build());
 
-      CreateEmptyTableResponse response = new CreateEmptyTableResponse();
+      DeclareTableResponse response = new DeclareTableResponse();
       response.setLocation(location);
       response.setStorageOptions(config.getStorageOptions());
       return response;
@@ -331,7 +329,7 @@ public class GlueNamespace implements LanceNamespace, Closeable {
           e, "Namespace not found: %s", namespaceName);
     } catch (GlueException e) {
       throw GlueToLanceErrorConverter.serverError(
-          e, "Failed to create empty table: %s.%s", namespaceName, tableName);
+          e, "Failed to declare table: %s.%s", namespaceName, tableName);
     }
   }
 

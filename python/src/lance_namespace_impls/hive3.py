@@ -29,7 +29,6 @@ Configuration Properties:
     root (str): Storage root location of the lakehouse (default: current working directory)
     ugi (str): Optional User Group Information for authentication (format: "user:group1,group2")
     client.pool-size (int): Size of the HMS client connection pool (default: 3)
-    storage.* (str): Additional storage configurations
 """
 
 from typing import List, Optional
@@ -149,7 +148,6 @@ class Hive3Namespace(LanceNamespace):
             root: Storage root location (optional)
             ugi: User Group Information for authentication (optional)
             client.pool-size: Size of the HMS client connection pool (optional, default: 3)
-            storage.*: Additional storage configurations
             **properties: Additional configuration properties
         """
         if not HIVE_AVAILABLE:
@@ -162,9 +160,6 @@ class Hive3Namespace(LanceNamespace):
         self.ugi = properties.get("ugi")
         self.root = properties.get("root", os.getcwd())
         self.pool_size = int(properties.get("client.pool-size", "3"))
-        self.storage_properties = {
-            k[8:]: v for k, v in properties.items() if k.startswith("storage.")
-        }
 
         self._properties = properties.copy()
         self._client = None
@@ -197,7 +192,10 @@ class Hive3Namespace(LanceNamespace):
 
     def _get_table_location(self, catalog: str, database: str, table: str) -> str:
         """Get the location for a table."""
-        return os.path.join(self.root, database, f"{table}.lance")
+        if catalog.lower() == "hive":
+            # For default catalog, use hive2-compatible path
+            return os.path.join(self.root, f"{database}.db", table)
+        return os.path.join(self.root, catalog, f"{database}.db", table)
 
     def list_namespaces(self, request: ListNamespacesRequest) -> ListNamespacesResponse:
         """List namespaces at the given level.
@@ -333,10 +331,10 @@ class Hive3Namespace(LanceNamespace):
                 )
                 database.locationUri = (
                     request.properties.get(
-                        "location", os.path.join(self.root, database_name)
+                        "location", os.path.join(self.root, f"{database_name}.db")
                     )
                     if request.properties
-                    else os.path.join(self.root, database_name)
+                    else os.path.join(self.root, f"{database_name}.db")
                 )
 
                 if request.properties:
@@ -448,7 +446,7 @@ class Hive3Namespace(LanceNamespace):
     def describe_table(self, request: DescribeTableRequest) -> DescribeTableResponse:
         """Describe a table.
 
-        Only load_detailed_metadata=false is supported. Returns location and storage_options only.
+        Only load_detailed_metadata=false is supported. Returns location only.
         """
         if request.load_detailed_metadata:
             raise ValueError(
@@ -471,9 +469,7 @@ class Hive3Namespace(LanceNamespace):
                 if not location:
                     raise ValueError(f"Table {request.id} has no location")
 
-                return DescribeTableResponse(
-                    location=location, storage_options=self.storage_properties
-                )
+                return DescribeTableResponse(location=location)
 
         except Exception as e:
             if NoSuchObjectException and isinstance(e, NoSuchObjectException):

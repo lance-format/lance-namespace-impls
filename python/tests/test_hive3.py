@@ -190,11 +190,10 @@ class TestHive3Namespace:
         mock_client_instance.get_all_tables.assert_called_once_with("test_db")
 
     def test_describe_table(self, hive_namespace, mock_hive_client):
-        """Test describing a table returns location and storage_options only.
+        """Test describing a table returns location only.
 
         Note: load_detailed_metadata=false is the only supported mode, which means
-        only location and storage_options are returned. Other fields (version, schema, etc.)
-        are not populated.
+        only location is returned. Other fields (version, schema, etc.) are not populated.
         """
         mock_table = MagicMock()
         mock_table.sd.location = "/tmp/warehouse/test_db/test_table"
@@ -211,10 +210,6 @@ class TestHive3Namespace:
         response = hive_namespace.describe_table(request)
 
         assert response.location == "/tmp/warehouse/test_db/test_table"
-        # Only location and storage_options are returned (load_detailed_metadata=false)
-        assert (
-            response.storage_options == {}
-        )  # Empty since no storage.* properties configured
 
         mock_client_instance.get_table.assert_called_once_with("test_db", "test_table")
 
@@ -263,8 +258,13 @@ class TestHive3Namespace:
 
     def test_get_table_location(self, hive_namespace):
         """Test getting table location for 3-level hierarchy."""
+        # Default "hive" catalog uses hive2-compatible path (no catalog in path)
         location = hive_namespace._get_table_location("hive", "test_db", "test_table")
-        assert location == "/tmp/warehouse/test_db/test_table.lance"
+        assert location == "/tmp/warehouse/test_db.db/test_table"
+
+        # Non-default catalog includes catalog in path
+        location = hive_namespace._get_table_location("custom", "test_db", "test_table")
+        assert location == "/tmp/warehouse/custom/test_db.db/test_table"
 
     def test_root_namespace_operations(self, hive_namespace):
         """Test root namespace operations."""
@@ -300,8 +300,6 @@ class TestHive3Namespace:
                     ugi="user:group1,group2",
                     **{
                         "client.pool-size": "5",
-                        "storage.access_key_id": "test-key",
-                        "storage.secret_access_key": "test-secret",
                     },
                 )
 
@@ -315,7 +313,6 @@ class TestHive3Namespace:
                 assert restored.root == "/tmp/warehouse"
                 assert restored.ugi == "user:group1,group2"
                 assert restored.pool_size == 5
-                assert restored.storage_properties["access_key_id"] == "test-key"
 
                 assert restored._client is None
 

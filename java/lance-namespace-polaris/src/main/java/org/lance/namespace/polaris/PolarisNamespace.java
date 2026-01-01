@@ -20,10 +20,10 @@ import org.lance.namespace.errors.NamespaceAlreadyExistsException;
 import org.lance.namespace.errors.NamespaceNotFoundException;
 import org.lance.namespace.errors.TableAlreadyExistsException;
 import org.lance.namespace.errors.TableNotFoundException;
-import org.lance.namespace.model.CreateEmptyTableRequest;
-import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeclareTableRequest;
+import org.lance.namespace.model.DeclareTableResponse;
 import org.lance.namespace.model.DeregisterTableRequest;
 import org.lance.namespace.model.DeregisterTableResponse;
 import org.lance.namespace.model.DescribeNamespaceRequest;
@@ -274,7 +274,7 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
   }
 
   @Override
-  public CreateEmptyTableResponse createEmptyTable(CreateEmptyTableRequest request) {
+  public DeclareTableResponse declareTable(DeclareTableRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
         tableId.levels() >= 3, "Table identifier must have catalog, namespace, and table name");
@@ -302,7 +302,7 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
 
       LOG.info("Created Lance table: {}.{}.{}", catalog, namespacePath, tableName);
 
-      CreateEmptyTableResponse result = new CreateEmptyTableResponse();
+      DeclareTableResponse result = new DeclareTableResponse();
       result.setLocation(response.getTable().getBaseLocation());
       return result;
     } catch (RestClientException e) {

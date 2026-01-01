@@ -14,10 +14,10 @@
 package org.lance.namespace.glue;
 
 import org.lance.namespace.errors.LanceNamespaceException;
-import org.lance.namespace.model.CreateEmptyTableRequest;
-import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeclareTableRequest;
+import org.lance.namespace.model.DeclareTableResponse;
 import org.lance.namespace.model.DeregisterTableRequest;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
@@ -247,12 +247,12 @@ public class TestGlueNamespaceIntegration {
     String tableName = "test_table_" + UUID.randomUUID().toString().substring(0, 8);
     String tableLocation = s3Root + "/" + dbName + "/" + tableName + ".lance";
 
-    // Create empty table
-    CreateEmptyTableRequest createRequest = new CreateEmptyTableRequest();
+    // Declare table
+    DeclareTableRequest createRequest = new DeclareTableRequest();
     createRequest.setId(Arrays.asList(dbName, tableName));
     createRequest.setLocation(tableLocation);
 
-    CreateEmptyTableResponse createResponse = namespace.createEmptyTable(createRequest);
+    DeclareTableResponse createResponse = namespace.declareTable(createRequest);
     assertThat(createResponse.getLocation()).isNotNull();
     assertThat(createResponse.getLocation()).isEqualTo(tableLocation);
 
@@ -297,10 +297,10 @@ public class TestGlueNamespaceIntegration {
       tableNames.add(tableName);
 
       String tableLocation = s3Root + "/" + dbName + "/" + tableName + ".lance";
-      CreateEmptyTableRequest createRequest = new CreateEmptyTableRequest();
+      DeclareTableRequest createRequest = new DeclareTableRequest();
       createRequest.setId(Arrays.asList(dbName, tableName));
       createRequest.setLocation(tableLocation);
-      namespace.createEmptyTable(createRequest);
+      namespace.declareTable(createRequest);
     }
 
     // List tables and verify all are present

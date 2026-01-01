@@ -14,10 +14,10 @@
 package org.lance.namespace.polaris;
 
 import org.lance.namespace.errors.LanceNamespaceException;
-import org.lance.namespace.model.CreateEmptyTableRequest;
-import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeclareTableRequest;
+import org.lance.namespace.model.DeclareTableResponse;
 import org.lance.namespace.model.DeregisterTableRequest;
 import org.lance.namespace.model.DeregisterTableResponse;
 import org.lance.namespace.model.DescribeNamespaceRequest;
@@ -210,7 +210,7 @@ public class TestPolarisNamespace {
   }
 
   @Test
-  public void testCreateEmptyTable() throws IOException {
+  public void testDeclareTable() throws IOException {
     PolarisModels.GenericTable mockTable = new PolarisModels.GenericTable();
     mockTable.setName("test_table");
     mockTable.setFormat("lance");
@@ -230,11 +230,11 @@ public class TestPolarisNamespace {
             eq(PolarisModels.LoadGenericTableResponse.class)))
         .thenReturn(mockResponse);
 
-    CreateEmptyTableRequest request = new CreateEmptyTableRequest();
+    DeclareTableRequest request = new DeclareTableRequest();
     request.setId(Arrays.asList("test_catalog", "schema1", "test_table"));
     request.setLocation("s3://bucket/path/to/table");
 
-    CreateEmptyTableResponse response = namespace.createEmptyTable(request);
+    DeclareTableResponse response = namespace.declareTable(request);
 
     assertThat(response.getLocation()).isEqualTo("s3://bucket/path/to/table");
   }
