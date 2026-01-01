@@ -13,7 +13,6 @@
  */
 package org.lance.namespace.hive3;
 
-import java.util.HashMap;
 import java.util.Map;
 
 public class Hive3NamespaceConfig {
@@ -28,15 +27,12 @@ public class Hive3NamespaceConfig {
   public static final String CLIENT_POOL_SIZE = "client.pool-size";
   public static final int CLIENT_POOL_SIZE_DEFAULT = 3;
 
-  public static final String STORAGE_OPTIONS_PREFIX = "storage.";
-
   /** Storage root location of the lakehouse on Hive catalog */
   public static final String ROOT = "root";
 
   public static final String ROOT_DEFAULT = System.getProperty("user.dir");
 
   private final int clientPoolSize;
-  private final Map<String, String> storageOptions;
   private final String root;
 
   public Hive3NamespaceConfig(Map<String, String> properties) {
@@ -44,16 +40,6 @@ public class Hive3NamespaceConfig {
     String clientPoolSizeStr = properties.get(CLIENT_POOL_SIZE);
     this.clientPoolSize =
         clientPoolSizeStr != null ? Integer.parseInt(clientPoolSizeStr) : CLIENT_POOL_SIZE_DEFAULT;
-
-    // Inline PropertyUtil.propertiesWithPrefix
-    Map<String, String> filteredStorageOptions = new HashMap<>();
-    for (Map.Entry<String, String> entry : properties.entrySet()) {
-      if (entry.getKey().startsWith(STORAGE_OPTIONS_PREFIX)) {
-        filteredStorageOptions.put(
-            entry.getKey().substring(STORAGE_OPTIONS_PREFIX.length()), entry.getValue());
-      }
-    }
-    this.storageOptions = filteredStorageOptions;
 
     // Inline PropertyUtil.propertyAsString and OpenDalUtil.stripTrailingSlash
     String rootValue = properties.getOrDefault(ROOT, ROOT_DEFAULT);
@@ -65,10 +51,6 @@ public class Hive3NamespaceConfig {
 
   public int getClientPoolSize() {
     return clientPoolSize;
-  }
-
-  public Map<String, String> getStorageOptions() {
-    return storageOptions;
   }
 
   public String getRoot() {

@@ -6,18 +6,19 @@ implements the Lance Namespace client spec.
 ## Background
 
 AWS Glue Data Catalog is a fully managed metadata repository that stores structural and operational metadata for data assets. 
-It is compatible with the Apache Hive Metastore API and can be used as a central metadata repository for data lakes. 
+It is based on the Apache Hive Metastore API, but uses JSON RPC instead of Apache Thrift for request response.
+It can be used as a central metadata repository for data lakes. 
 For details on AWS Glue, see the [AWS Glue Data Catalog Documentation](https://docs.aws.amazon.com/glue/latest/dg/manage-catalog.html).
 
 ## Namespace Implementation Configuration Properties
 
 The Lance Glue namespace implementation accepts the following configuration properties:
 
-The **catalog_id** property is optional and specifies the Catalog ID of the Glue catalog (defaults to AWS account ID).
+The **catalog_id** property is optional and specifies the Catalog ID of the Glue catalog to use as the starting point. When not specified, it is resolved to the caller's AWS account ID.
 
 The **endpoint** property is optional and specifies a custom Glue service endpoint for API compatible metastores.
 
-The **region** property is optional and specifies the AWS region for all Glue operations.
+The **region** property is optional and specifies the AWS region for all Glue operations. When not specified, it is resolved to the default AWS region in the caller's environment.
 
 The **access_key_id** property is optional and specifies the AWS access key ID for static credentials.
 
@@ -51,7 +52,7 @@ The Glue namespace supports multiple authentication methods:
 AWS Glue Data Catalog supports a recursive catalog structure through the [GetCatalog](https://docs.aws.amazon.com/glue/latest/webapi/API_GetCatalog.html) and [GetCatalogs](https://docs.aws.amazon.com/glue/latest/webapi/API_GetCatalogs.html) APIs. 
 This allows for multi-level namespace hierarchies.
 
-The **root namespace** is represented by the default AWS Glue Data Catalog, which has a catalog ID of `None` or equal to the caller's AWS account ID.
+The **root namespace** is represented by the default AWS Glue Data Catalog. When the `catalog_id` property is not specified or set to `None`, it is resolved to the caller's AWS account ID. Users can specify a different `catalog_id` to use another AWS account's Glue catalog as the starting point.
 
 A **child catalog** within the root catalog forms a child namespace. The [GetCatalogs](https://docs.aws.amazon.com/glue/latest/webapi/API_GetCatalogs.html) API supports `ParentCatalogId` parameter to traverse the catalog hierarchy.
 

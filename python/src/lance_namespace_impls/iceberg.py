@@ -1,21 +1,21 @@
 """
 Iceberg REST Catalog namespace implementation for Lance.
 
-The prefix (typically a warehouse or catalog name) is treated as part of the
-namespace identifier, similar to how Polaris handles catalog names.
-For example: [warehouse_name, namespace1, namespace2, ..., table_name]
+The warehouse is the first element of the namespace/table identifier.
+For example: [warehouse, namespace1, namespace2, ..., table_name]
+
+The implementation caches warehouse -> config mappings by calling
+/v1/config?warehouse={warehouse}. If the config contains a prefix,
+that prefix is used for API paths; otherwise, the warehouse name is used.
 """
 
 import logging
 import urllib.parse
-import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from lance.namespace import LanceNamespace
 from lance_namespace_urllib3_client.models import (
-    CreateEmptyTableRequest,
-    CreateEmptyTableResponse,
     CreateNamespaceRequest,
     CreateNamespaceResponse,
     DeclareTableRequest,
@@ -55,7 +55,6 @@ class IcebergNamespaceConfig:
     """Configuration for Iceberg REST Catalog namespace."""
 
     ENDPOINT = "endpoint"
-    WAREHOUSE = "warehouse"
     AUTH_TOKEN = "auth_token"
     CREDENTIAL = "credential"
     CONNECT_TIMEOUT = "connect_timeout"
@@ -64,7 +63,6 @@ class IcebergNamespaceConfig:
     ROOT = "root"
 
     endpoint: str
-    warehouse: Optional[str] = None
     auth_token: Optional[str] = None
     credential: Optional[str] = None
     connect_timeout: int = 10000
@@ -79,7 +77,6 @@ class IcebergNamespaceConfig:
         if not self.endpoint:
             raise ValueError(f"Required property {self.ENDPOINT} is not set")
 
-        self.warehouse = properties.get(self.WAREHOUSE)
         self.auth_token = properties.get(self.AUTH_TOKEN)
         self.credential = properties.get(self.CREDENTIAL)
         self.connect_timeout = int(properties.get(self.CONNECT_TIMEOUT, "10000"))
@@ -105,11 +102,13 @@ class IcebergNamespace(LanceNamespace):
     """
     Iceberg REST Catalog namespace implementation for Lance.
 
-    The prefix (warehouse) is included in the namespace identifier:
-    - Namespace ID format: [prefix, namespace1, namespace2, ...]
-    - Table ID format: [prefix, namespace1, namespace2, ..., table_name]
+    The warehouse is the first element of the namespace/table identifier:
+    - Namespace ID format: [warehouse, namespace1, namespace2, ...]
+    - Table ID format: [warehouse, namespace1, namespace2, ..., table_name]
 
-    This is consistent with how Polaris handles catalog names.
+    The implementation caches warehouse -> config mappings by calling
+    /v1/config?warehouse={warehouse}. If the config contains a prefix,
+    that prefix is used for API paths; otherwise, the warehouse name is used.
     """
 
     TABLE_TYPE_LANCE = "lance"
@@ -123,8 +122,6 @@ class IcebergNamespace(LanceNamespace):
         headers = {}
         if self.config.auth_token:
             headers["Authorization"] = f"Bearer {self.config.auth_token}"
-        if self.config.warehouse:
-            headers["X-Iceberg-Access-Delegation"] = "vended-credentials"
 
         self.rest_client = RestClient(
             base_url=self.config.get_base_api_url(),
@@ -184,13 +181,13 @@ class IcebergNamespace(LanceNamespace):
     def list_namespaces(self, request: ListNamespacesRequest) -> ListNamespacesResponse:
         """List namespaces.
 
-        The first element of request.id is treated as the prefix (warehouse).
+        The first element of request.id is the warehouse.
         Remaining elements specify the parent namespace to list children of.
         """
         ns_id = self._parse_identifier(request.id)
 
         if not ns_id:
-            raise InvalidInputException("Must specify at least the prefix (warehouse)")
+            raise InvalidInputException("Must specify at least the warehouse")
 
         try:
             prefix = ns_id[0]
@@ -231,7 +228,7 @@ class IcebergNamespace(LanceNamespace):
     ) -> CreateNamespaceResponse:
         """Create a new namespace.
 
-        The first element of request.id is treated as the prefix (warehouse).
+        The first element of request.id is the warehouse.
         Remaining elements are the namespace to create.
         """
         ns_id = self._parse_identifier(request.id)
@@ -276,7 +273,7 @@ class IcebergNamespace(LanceNamespace):
     ) -> DescribeNamespaceResponse:
         """Describe a namespace.
 
-        The first element of request.id is treated as the prefix (warehouse).
+        The first element of request.id is the warehouse.
         Remaining elements are the namespace to describe.
         """
         ns_id = self._parse_identifier(request.id)
@@ -313,7 +310,7 @@ class IcebergNamespace(LanceNamespace):
     def drop_namespace(self, request: DropNamespaceRequest) -> DropNamespaceResponse:
         """Drop a namespace.
 
-        The first element of request.id is treated as the prefix (warehouse).
+        The first element of request.id is the warehouse.
         Remaining elements are the namespace to drop.
         """
         if request.behavior and request.behavior.lower() == "cascade":
@@ -354,13 +351,13 @@ class IcebergNamespace(LanceNamespace):
     def list_tables(self, request: ListTablesRequest) -> ListTablesResponse:
         """List tables in a namespace.
 
-        The first element of request.id is treated as the prefix (warehouse).
+        The first element of request.id is the warehouse.
         Remaining elements are the namespace to list tables from.
         """
         ns_id = self._parse_identifier(request.id)
 
         if len(ns_id) < 2:
-            raise InvalidInputException("Must specify at least prefix and namespace")
+            raise InvalidInputException("Must specify at least warehouse and namespace")
 
         try:
             prefix = ns_id[0]
@@ -404,7 +401,7 @@ class IcebergNamespace(LanceNamespace):
     def declare_table(self, request: DeclareTableRequest) -> DeclareTableResponse:
         """Declare a table (metadata only operation).
 
-        The first element of request.id is treated as the prefix (warehouse).
+        The first element of request.id is the warehouse.
         Middle elements are the namespace, last element is the table name.
         """
         table_id = self._parse_identifier(request.id)
@@ -464,29 +461,10 @@ class IcebergNamespace(LanceNamespace):
         except Exception as e:
             raise InternalException(f"Failed to declare table: {e}")
 
-    def create_empty_table(
-        self, request: CreateEmptyTableRequest
-    ) -> CreateEmptyTableResponse:
-        """Create an empty table (metadata only operation).
-
-        .. deprecated::
-            Use :meth:`declare_table` instead.
-        """
-        warnings.warn(
-            "create_empty_table is deprecated, use declare_table instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        declare_request = DeclareTableRequest()
-        declare_request.id = request.id
-        declare_request.location = request.location
-        response = self.declare_table(declare_request)
-        return CreateEmptyTableResponse(location=response.location)
-
     def describe_table(self, request: DescribeTableRequest) -> DescribeTableResponse:
         """Describe a table.
 
-        The first element of request.id is treated as the prefix (warehouse).
+        The first element of request.id is the warehouse.
         Middle elements are the namespace, last element is the table name.
         """
         if request.load_detailed_metadata:
@@ -546,7 +524,7 @@ class IcebergNamespace(LanceNamespace):
     ) -> DeregisterTableResponse:
         """Deregister a table (remove from catalog without deleting data).
 
-        The first element of request.id is treated as the prefix (warehouse).
+        The first element of request.id is the warehouse.
         Middle elements are the namespace, last element is the table name.
         """
         table_id = self._parse_identifier(request.id)

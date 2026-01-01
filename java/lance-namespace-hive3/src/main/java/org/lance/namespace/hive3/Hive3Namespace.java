@@ -23,10 +23,10 @@ import org.lance.namespace.errors.NamespaceNotFoundException;
 import org.lance.namespace.errors.ServiceUnavailableException;
 import org.lance.namespace.errors.TableAlreadyExistsException;
 import org.lance.namespace.errors.TableNotFoundException;
-import org.lance.namespace.model.CreateEmptyTableRequest;
-import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeclareTableRequest;
+import org.lance.namespace.model.DeclareTableResponse;
 import org.lance.namespace.model.DeregisterTableRequest;
 import org.lance.namespace.model.DeregisterTableResponse;
 import org.lance.namespace.model.DescribeNamespaceRequest;
@@ -308,7 +308,7 @@ public class Hive3Namespace implements LanceNamespace {
   // Removed: createTable(CreateTableRequest, byte[]) - using default implementation from interface
 
   @Override
-  public CreateEmptyTableResponse createEmptyTable(CreateEmptyTableRequest request) {
+  public DeclareTableResponse declareTable(DeclareTableRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
 
     ValidationUtil.checkArgument(
@@ -324,7 +324,7 @@ public class Hive3Namespace implements LanceNamespace {
     // Create table in metastore without data (pass null for requestData and properties)
     doCreateTable(tableId, null, location, null, null);
 
-    CreateEmptyTableResponse response = new CreateEmptyTableResponse();
+    DeclareTableResponse response = new DeclareTableResponse();
     response.setLocation(location);
     return response;
   }
@@ -534,10 +534,7 @@ public class Hive3Namespace implements LanceNamespace {
 
     if (data != null && data.length > 0) {
       WriteParams writeParams =
-          new WriteParams.Builder()
-              .withMode(WriteParams.WriteMode.CREATE)
-              .withStorageOptions(config.getStorageOptions())
-              .build();
+          new WriteParams.Builder().withMode(WriteParams.WriteMode.CREATE).build();
       Dataset.create(allocator, location, schema, writeParams);
     }
   }
@@ -743,7 +740,7 @@ public class Hive3Namespace implements LanceNamespace {
         if (!dbLocation.endsWith("/")) {
           dbLocation += "/";
         }
-        return dbLocation + tableName.toLowerCase() + ".lance";
+        return dbLocation + tableName.toLowerCase();
       }
     } catch (Exception e) {
       // Fall back to using root config if database location fails
@@ -751,8 +748,14 @@ public class Hive3Namespace implements LanceNamespace {
           "Failed to get database location for {}.{}, using root config", catalogName, dbName, e);
     }
 
-    // Use the configured root as fallback
+    // For default "hive" catalog, use hive2-compatible path: {root}/{database}.db/{table}
+    // For other catalogs, use: {root}/{catalog}/{database}.db/{table}
+    if ("hive".equalsIgnoreCase(catalogName)) {
+      return String.format(
+          "%s/%s.db/%s", config.getRoot(), dbName.toLowerCase(), tableName.toLowerCase());
+    }
     return String.format(
-        "%s/%s/%s.lance", config.getRoot(), dbName.toLowerCase(), tableName.toLowerCase());
+        "%s/%s/%s.db/%s",
+        config.getRoot(), catalogName.toLowerCase(), dbName.toLowerCase(), tableName.toLowerCase());
   }
 }

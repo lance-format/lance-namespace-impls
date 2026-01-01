@@ -1,4 +1,4 @@
-# Lance Iceberg REST Catalog Implementation Spec
+#  Apache Iceberg REST Catalog Lance Namespace Implementation Spec
 
 This document describes how the Apache Iceberg REST Catalog implements the Lance Namespace client spec.
 
@@ -10,26 +10,31 @@ Apache Iceberg REST Catalog is a standardized REST API for interacting with Iceb
 
 The Lance Iceberg REST Catalog namespace implementation accepts the following configuration properties:
 
-| Property | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `endpoint` | Yes | - | Iceberg REST Catalog server endpoint URL (e.g., `http://localhost:8181`). Must start with `http://` or `https://`. |
-| `warehouse` | No | - | Warehouse identifier. Some Iceberg REST implementations require this. The warehouse name is resolved to an API prefix via the `/v1/config` endpoint. |
-| `auth_token` | No | - | Bearer token for authentication. |
-| `credential` | No | - | OAuth2 client credential in `client_id:client_secret` format for client credentials authentication flow. |
-| `connect_timeout` | No | `10000` | Connection timeout in milliseconds. |
-| `read_timeout` | No | `30000` | Read timeout in milliseconds. |
-| `max_retries` | No | `3` | Maximum number of retries for failed requests. |
-| `root` | No | current working directory | Default storage root location for tables. |
+The **endpoint** property is required and specifies the Iceberg REST Catalog server endpoint URL (e.g., `http://localhost:8181`). Must start with `http://` or `https://`.
+
+The **auth_token** property is optional and specifies the bearer token for authentication.
+
+The **credential** property is optional and specifies the OAuth2 client credential in `client_id:client_secret` format for client credentials authentication flow.
+
+The **connect_timeout** property is optional and specifies the connection timeout in milliseconds (default: 10000).
+
+The **read_timeout** property is optional and specifies the read timeout in milliseconds (default: 30000).
+
+The **max_retries** property is optional and specifies the maximum number of retries for failed requests (default: 3).
+
+The **root** property is optional and specifies the default storage root location for tables. When not specified, it defaults to the current working directory.
 
 ## Object Mapping
 
 ### Namespace
 
-The **root namespace** is represented by the Iceberg catalog root, accessed via the `/namespaces` endpoint.
+The **root namespace** (empty identifier) represents the Iceberg REST Catalog server itself.
 
-A **child namespace** is a nested namespace in Iceberg. Iceberg supports arbitrary nesting depth using an array of strings (e.g., `["level1", "level2", "level3"]`).
+The **warehouse** is the first level of the namespace hierarchy. The implementation caches the warehouse to config mapping by calling the `/v1/config?warehouse={warehouse}` endpoint. If the config response contains a `prefix` in the defaults, that prefix is used for API paths; otherwise, the warehouse name itself is used as the prefix. A single-element identifier (e.g., `["my-warehouse"]`) lists all top-level namespaces under that warehouse.
 
-The **namespace identifier** is constructed by joining namespace levels with the `\x1F` (unit separator) character for API calls. In user-facing contexts, a `.` delimiter is used.
+A **child namespace** is a nested namespace in Iceberg. Iceberg supports arbitrary nesting depth. The **namespace identifier** format is `[warehouse, namespace1, namespace2, ...]` (e.g., `["my-warehouse", "level1", "level2"]`).
+
+For API calls, namespace levels (excluding the warehouse) are joined with the `\x1F` (unit separator) character. In user-facing contexts, a `.` delimiter is used.
 
 **Namespace properties** are stored in the namespace's properties map, returned by the Iceberg namespace API.
 
@@ -37,7 +42,7 @@ The **namespace identifier** is constructed by joining namespace levels with the
 
 A **table** is represented as a regular Iceberg table with a dummy schema. The dummy schema contains a single nullable string column named `dummy`. This approach ensures compatibility with the Iceberg REST Catalog API while storing the actual Lance table at the same location.
 
-The **table identifier** is constructed by joining the namespace path and table name.
+The **table identifier** format is `[warehouse, namespace1, namespace2, ..., table_name]` (e.g., `["my-warehouse", "db", "my_table"]`).
 
 The **table location** is stored in the `location` field of the Iceberg table metadata, pointing to the root location of the Lance table.
 
@@ -55,14 +60,20 @@ Creates a new namespace in the Iceberg catalog.
 
 The implementation:
 
-1. Parse the namespace identifier to get the namespace array
-2. Construct a CreateNamespaceRequest with the namespace array and properties
-3. POST to `/v1/{prefix}/namespaces` endpoint
-4. Return the created namespace properties
+1. Extract the warehouse from the first element of the namespace identifier
+2. Resolve the API prefix from the warehouse config cache
+3. Extract the namespace path from the remaining elements
+4. Construct a CreateNamespaceRequest with the namespace array and properties
+5. POST to `/v1/{prefix}/namespaces` endpoint
+6. Return the created namespace properties
 
 **Error Handling:**
 
-If the namespace already exists, return error code `2` (NamespaceAlreadyExists). If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the namespace already exists, return error code `2` (NamespaceAlreadyExists).
+
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### ListNamespaces
 
@@ -70,13 +81,17 @@ Lists child namespaces under a given parent namespace.
 
 The implementation:
 
-1. Parse the parent namespace identifier
-2. GET `/v1/{prefix}/namespaces` with `parent` query parameter
-3. Extract namespace names from the response
+1. Extract the warehouse from the first element of the namespace identifier
+2. Resolve the API prefix from the warehouse config cache
+3. Extract the parent namespace path from the remaining elements (if any)
+4. GET `/v1/{prefix}/namespaces` with `parent` query parameter
+5. Extract namespace names from the response
 
 **Error Handling:**
 
-If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DescribeNamespace
 
@@ -84,13 +99,17 @@ Retrieves properties and metadata for a namespace.
 
 The implementation:
 
-1. Parse the namespace identifier
-2. GET `/v1/{prefix}/namespaces/{namespace}` with URL-encoded namespace path
-3. Return the namespace properties
+1. Extract the warehouse from the first element of the namespace identifier
+2. Resolve the API prefix from the warehouse config cache
+3. Extract the namespace path from the remaining elements
+4. GET `/v1/{prefix}/namespaces/{namespace}` with URL-encoded namespace path
+5. Return the namespace properties
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DropNamespace
 
@@ -98,8 +117,10 @@ Removes a namespace from the Iceberg catalog. Only RESTRICT mode is supported; C
 
 The implementation:
 
-1. Parse the namespace identifier
-2. DELETE `/v1/{prefix}/namespaces/{namespace}` with URL-encoded namespace path
+1. Extract the warehouse from the first element of the namespace identifier
+2. Resolve the API prefix from the warehouse config cache
+3. Extract the namespace path from the remaining elements
+4. DELETE `/v1/{prefix}/namespaces/{namespace}` with URL-encoded namespace path
 
 **Error Handling:**
 
@@ -115,18 +136,25 @@ Declares a new Lance table in the Iceberg catalog without creating the underlyin
 
 The implementation:
 
-1. Parse the table identifier to extract namespace and table name
-2. Construct a CreateTableRequest with:
+1. Extract the warehouse from the first element of the table identifier
+2. Resolve the API prefix from the warehouse config cache
+3. Extract the namespace path from the middle elements
+4. Extract the table name from the last element
+5. Construct a CreateTableRequest with:
     - `name`: the table name
-    - `location`: the specified or default location (defaults to `{root}/{prefix}/{namespace}/{table_name}`)
+    - `location`: the specified or default location (defaults to `{root}/{warehouse}/{namespace}/{table_name}`)
     - `schema`: a dummy Iceberg schema with a single nullable string column `dummy`
     - `properties`: table properties including `table_type=lance`
-3. POST to `/v1/{prefix}/namespaces/{namespace}/tables`
-4. Return the declared table location
+6. POST to `/v1/{prefix}/namespaces/{namespace}/tables`
+7. Return the declared table location
 
 **Error Handling:**
 
-If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the table already exists, return error code `5` (TableAlreadyExists). If the server returns an error, return error code `18` (Internal).
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the table already exists, return error code `5` (TableAlreadyExists).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### ListTables
 
@@ -134,14 +162,18 @@ Lists all Lance tables in a namespace.
 
 The implementation:
 
-1. Parse the namespace identifier
-2. GET `/v1/{prefix}/namespaces/{namespace}/tables`
-3. For each table, load its metadata and filter tables where `properties.table_type=lance`
-4. Extract table names from the response identifiers
+1. Extract the warehouse from the first element of the namespace identifier
+2. Resolve the API prefix from the warehouse config cache
+3. Extract the namespace path from the remaining elements
+4. GET `/v1/{prefix}/namespaces/{namespace}/tables`
+5. For each table, load its metadata and filter tables where `properties.table_type=lance`
+6. Extract table names from the response identifiers
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DescribeTable
 
@@ -149,10 +181,13 @@ Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is sup
 
 The implementation:
 
-1. Parse the table identifier to extract namespace and table name
-2. GET `/v1/{prefix}/namespaces/{namespace}/tables/{table}`
-3. Verify the table has `table_type=lance` property
-4. Return the table location and storage_options from `properties`
+1. Extract the warehouse from the first element of the table identifier
+2. Resolve the API prefix from the warehouse config cache
+3. Extract the namespace path from the middle elements
+4. Extract the table name from the last element
+5. GET `/v1/{prefix}/namespaces/{namespace}/tables/{table}`
+6. Verify the table has `table_type=lance` property
+7. Return the table location and storage_options from `properties`
 
 **Error Handling:**
 
@@ -168,9 +203,14 @@ Removes a Lance table registration from the Iceberg catalog without deleting the
 
 The implementation:
 
-1. Parse the table identifier to extract namespace and table name
-2. DELETE `/v1/{prefix}/namespaces/{namespace}/tables/{table}?purgeRequested=false`
+1. Extract the warehouse from the first element of the table identifier
+2. Resolve the API prefix from the warehouse config cache
+3. Extract the namespace path from the middle elements
+4. Extract the table name from the last element
+5. DELETE `/v1/{prefix}/namespaces/{namespace}/tables/{table}?purgeRequested=false`
 
 **Error Handling:**
 
-If the table does not exist, return error code `4` (TableNotFound). If the server returns an error, return error code `18` (Internal).
+If the table does not exist, return error code `4` (TableNotFound).
+
+If the server returns an error, return error code `18` (Internal).

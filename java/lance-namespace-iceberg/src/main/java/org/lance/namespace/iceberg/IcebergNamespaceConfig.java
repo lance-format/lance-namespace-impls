@@ -19,7 +19,6 @@ import java.util.Map;
 public class IcebergNamespaceConfig {
 
   public static final String ENDPOINT = "endpoint";
-  public static final String WAREHOUSE = "warehouse";
   public static final String AUTH_TOKEN = "auth_token";
   public static final String CREDENTIAL = "credential";
   public static final String CONNECT_TIMEOUT = "connect_timeout";
@@ -28,7 +27,6 @@ public class IcebergNamespaceConfig {
   public static final String ROOT = "root";
 
   private final String endpoint;
-  private final String warehouse;
   private final String authToken;
   private final String credential;
   private final int connectTimeout;
@@ -42,7 +40,6 @@ public class IcebergNamespaceConfig {
       throw new IllegalArgumentException("Required property 'endpoint' is not set");
     }
 
-    this.warehouse = properties.get(WAREHOUSE);
     this.authToken = properties.get(AUTH_TOKEN);
     this.credential = properties.get(CREDENTIAL);
     this.connectTimeout = Integer.parseInt(properties.getOrDefault(CONNECT_TIMEOUT, "10000"));
@@ -53,10 +50,6 @@ public class IcebergNamespaceConfig {
 
   public String getEndpoint() {
     return endpoint;
-  }
-
-  public String getWarehouse() {
-    return warehouse;
   }
 
   public String getAuthToken() {

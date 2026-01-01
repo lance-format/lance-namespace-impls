@@ -1,12 +1,12 @@
-# Lance Polaris Namespace Implementation Spec
+# Apache Polaris Lance Namespace Implementation Spec
 
 This document describes how the Polaris Catalog implements the Lance Namespace client spec.
 
 ## Background
 
-Apache Polaris is an open-source catalog implementation for Apache Iceberg that provides a REST API for managing tables and namespaces. Polaris supports the Generic Table API which allows registering non-Iceberg table formats. For details on Polaris Catalog, see the [Polaris Catalog Documentation](https://polaris.apache.org).
-
-**Note:** The Generic Table API is available in Polaris 1.2.0-incubating and later versions. Ensure your Polaris deployment is running a compatible version.
+Apache Polaris is an open-source catalog implementation for Apache Iceberg that provides a REST API for managing tables and namespaces. 
+Polaris supports the Generic Table API which allows registering non-Iceberg table formats. 
+For details on Polaris Catalog, see the [Polaris Catalog Documentation](https://polaris.apache.org).
 
 ## Namespace Implementation Configuration Properties
 
@@ -26,14 +26,13 @@ The **max_retries** property is optional and specifies the maximum number of ret
 
 ### Namespace
 
-The **namespace identifier** follows a hierarchical structure where the first level represents the Polaris catalog (warehouse), and subsequent levels represent namespaces within that catalog. For example, `my_catalog.my_schema` refers to namespace `my_schema` in catalog `my_catalog`.
+The **root namespace** (empty identifier) represents the Polaris server itself.
 
-A **child namespace** is a nested namespace in Polaris. Polaris supports arbitrary nesting depth, allowing flexible namespace organization within a catalog.
+The **catalog** is the first level of the namespace hierarchy. It determines which Polaris catalog the operations target. A single-element identifier (e.g., `["my-catalog"]`) lists all top-level namespaces under that catalog.
 
-The **namespace identifier** is constructed by joining the catalog and namespace levels with the `.` delimiter (e.g., `catalog.schema.subschema`). When making API calls:
-- The catalog is extracted as the first level
-- Remaining levels form the namespace path within that catalog
-- The namespace path is URL-encoded using `.` as the separator
+A **child namespace** is a nested namespace in Polaris. Polaris supports arbitrary nesting depth. The **namespace identifier** format is `[catalog, namespace1, namespace2, ...]` (e.g., `["my-catalog", "schema", "subschema"]`).
+
+For API calls, namespace levels (excluding the catalog) are joined with the `.` delimiter. The catalog is used in the API path as `/api/catalog/v1/{catalog}/namespaces`.
 
 **Namespace properties** are stored in the namespace's properties map, returned by the Polaris namespace API.
 
@@ -41,7 +40,7 @@ The **namespace identifier** is constructed by joining the catalog and namespace
 
 A **table** is represented as a [Generic Table](https://github.com/polaris-catalog/polaris/blob/main/spec/polaris-catalog-apis/generic-tables-api.yaml) object in Polaris with `format` set to `lance`.
 
-The **table identifier** is constructed by joining the namespace path and table name with the `.` delimiter (e.g., `catalog.schema.table`).
+The **table identifier** format is `[catalog, namespace1, namespace2, ..., table_name]` (e.g., `["my-catalog", "schema", "my_table"]`).
 
 The **table location** is stored in the `base-location` field of the Generic Table, pointing to the root location of the Lance table.
 
@@ -67,7 +66,11 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace already exists, return error code `2` (NamespaceAlreadyExists). If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the namespace already exists, return error code `2` (NamespaceAlreadyExists).
+
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### ListNamespaces
 
@@ -83,7 +86,9 @@ The implementation:
 
 **Error Handling:**
 
-If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DescribeNamespace
 
@@ -98,7 +103,9 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DropNamespace
 
@@ -137,7 +144,11 @@ The implementation:
 
 **Error Handling:**
 
-If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the table already exists, return error code `5` (TableAlreadyExists). If the server returns an error, return error code `18` (Internal).
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the table already exists, return error code `5` (TableAlreadyExists).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### ListTables
 
@@ -152,7 +163,9 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DescribeTable
 
@@ -186,4 +199,6 @@ The implementation:
 
 **Error Handling:**
 
-If the table does not exist, return error code `4` (TableNotFound). If the server returns an error, return error code `18` (Internal).
+If the table does not exist, return error code `4` (TableNotFound).
+
+If the server returns an error, return error code `18` (Internal).

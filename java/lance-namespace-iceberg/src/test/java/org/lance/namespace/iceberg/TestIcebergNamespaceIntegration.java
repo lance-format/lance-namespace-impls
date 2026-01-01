@@ -14,10 +14,10 @@
 package org.lance.namespace.iceberg;
 
 import org.lance.namespace.errors.LanceNamespaceException;
-import org.lance.namespace.model.CreateEmptyTableRequest;
-import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeclareTableRequest;
+import org.lance.namespace.model.DeclareTableResponse;
 import org.lance.namespace.model.DeregisterTableRequest;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
@@ -191,12 +191,12 @@ public class TestIcebergNamespaceIntegration {
 
     String tableName = "test_table_" + UUID.randomUUID().toString().substring(0, 8);
 
-    // Create empty table
-    CreateEmptyTableRequest createRequest = new CreateEmptyTableRequest();
+    // Declare table
+    DeclareTableRequest createRequest = new DeclareTableRequest();
     createRequest.setId(Arrays.asList(TEST_WAREHOUSE, testNamespace, tableName));
     createRequest.setLocation("s3://warehouse/" + testNamespace + "/" + tableName);
 
-    CreateEmptyTableResponse createResponse = namespace.createEmptyTable(createRequest);
+    DeclareTableResponse createResponse = namespace.declareTable(createRequest);
     assertThat(createResponse.getLocation()).isNotNull();
 
     // Describe table
@@ -230,18 +230,18 @@ public class TestIcebergNamespaceIntegration {
   }
 
   @Test
-  public void testCreateEmptyTableWithLocation() {
+  public void testDeclareTableWithLocation() {
     // Create namespace first
     CreateNamespaceRequest nsRequest = new CreateNamespaceRequest();
     nsRequest.setId(Arrays.asList(TEST_WAREHOUSE, testNamespace));
     namespace.createNamespace(nsRequest);
 
     String tableName = "lance_table";
-    CreateEmptyTableRequest createRequest = new CreateEmptyTableRequest();
+    DeclareTableRequest createRequest = new DeclareTableRequest();
     createRequest.setId(Arrays.asList(TEST_WAREHOUSE, testNamespace, tableName));
     createRequest.setLocation("s3://warehouse/" + testNamespace + "/" + tableName);
 
-    CreateEmptyTableResponse response = namespace.createEmptyTable(createRequest);
+    DeclareTableResponse response = namespace.declareTable(createRequest);
     assertThat(response.getLocation()).isNotNull();
 
     // Clean up table

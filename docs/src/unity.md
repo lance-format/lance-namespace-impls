@@ -1,4 +1,4 @@
-# Lance Unity Namespace Implementation Spec
+# Unity Catalog Lance Namespace Implementation Spec
 
 This document describes how the Unity Catalog implements the Lance Namespace client spec.
 
@@ -26,11 +26,11 @@ The **root** property is optional and specifies the storage root location for ne
 
 ### Namespace
 
-The **namespace identifier** follows a hierarchical structure where the first level represents the Unity Catalog, and the second level represents a schema within that catalog. For example, `my_catalog.my_schema` refers to schema `my_schema` in catalog `my_catalog`.
+The **root namespace** (empty identifier) represents the Unity Catalog server itself.
 
-The **root namespace** (empty identifier) lists all available catalogs in the Unity Catalog server.
+The **catalog** is the first level of the namespace hierarchy. A single-element identifier (e.g., `["my-catalog"]`) lists all schemas within that catalog.
 
-A **child namespace** is a schema within a Unity Catalog. Unity supports a fixed 3-level hierarchy: catalog.schema.table.
+A **schema** is the second level of the namespace hierarchy. Unity supports a fixed 3-level hierarchy: catalog.schema.table. The **namespace identifier** format is `[catalog, schema]` (e.g., `["my-catalog", "my_schema"]`).
 
 **Namespace properties** are stored in the Unity schema's properties map.
 
@@ -65,7 +65,9 @@ The implementation:
 
 **Error Handling:**
 
-If the schema already exists, return error code `2` (NamespaceAlreadyExists). If the server returns an error, return error code `18` (Internal).
+If the schema already exists, return error code `2` (NamespaceAlreadyExists).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### ListNamespaces
 
@@ -80,7 +82,9 @@ The implementation:
 
 **Error Handling:**
 
-If the catalog does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the catalog does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DescribeNamespace
 
@@ -94,7 +98,9 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DropNamespace
 
@@ -133,7 +139,11 @@ The implementation:
 
 **Error Handling:**
 
-If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the table already exists, return error code `5` (TableAlreadyExists). If the server returns an error, return error code `18` (Internal).
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the table already exists, return error code `5` (TableAlreadyExists).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### ListTables
 
@@ -148,7 +158,9 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the server returns an error, return error code `18` (Internal).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the server returns an error, return error code `18` (Internal).
 
 ### DescribeTable
 
@@ -181,4 +193,8 @@ The implementation:
 
 **Error Handling:**
 
-If the table does not exist, return error code `4` (TableNotFound). If the table is not a Lance table, return error code `13` (InvalidInput). If the server returns an error, return error code `18` (Internal).
+If the table does not exist, return error code `4` (TableNotFound).
+
+If the table is not a Lance table, return error code `13` (InvalidInput).
+
+If the server returns an error, return error code `18` (Internal).

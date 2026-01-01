@@ -1,4 +1,4 @@
-# Lance Gravitino Namespace
+# Apache Gravitino
 
 **Apache Gravitino** is a high-performance, geo-distributed, and federated metadata lake.
 It manages metadata directly in different sources, types, and regions, providing unified metadata access for data and AI assets.

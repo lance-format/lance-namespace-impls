@@ -1,4 +1,4 @@
-# Lance Hive 2.x Namespace Implementation Spec
+# Apache Hive 2.X MetaStore Lance Namespace Implementation Spec
 
 This document describes how the Hive 2.x MetaStore implements the Lance Namespace client spec.
 
@@ -13,8 +13,6 @@ The Lance Hive 2.x namespace implementation accepts the following configuration 
 The **client.pool-size** property is optional and specifies the size of the HMS client connection pool. Default value is `3`.
 
 The **root** property is optional and specifies the storage root location of the lakehouse on Hive catalog. Default value is the current working directory.
-
-The **storage.*** prefix properties are optional and specify additional storage configurations to access tables (e.g., `storage.region=us-west-2`).
 
 ## Object Mapping
 
@@ -56,7 +54,9 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace already exists and mode is CREATE, return error code `2` (NamespaceAlreadyExists). If the HMS connection fails, return error code `17` (ServiceUnavailable).
+If the namespace already exists and mode is CREATE, return error code `2` (NamespaceAlreadyExists).
+
+If the HMS connection fails, return error code `17` (ServiceUnavailable).
 
 ### ListNamespaces
 
@@ -83,7 +83,9 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the HMS connection fails, return error code `17` (ServiceUnavailable).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the HMS connection fails, return error code `17` (ServiceUnavailable).
 
 ### DropNamespace
 
@@ -113,13 +115,17 @@ The implementation:
 1. Parse the table identifier to extract database and table name
 2. Verify the parent namespace exists
 3. Create an HMS Table object with `tableType=EXTERNAL_TABLE`
-4. Set the storage descriptor with the specified or default location
+4. Set the storage descriptor with the specified or default location. When location is not specified, it defaults to `{root}/{database}.db/{table}`
 5. Add `table_type=lance` to the table parameters
 6. Register the table in HMS
 
 **Error Handling:**
 
-If the parent namespace does not exist, return error code `1` (NamespaceNotFound). If the table already exists, return error code `5` (TableAlreadyExists). If the HMS connection fails, return error code `17` (ServiceUnavailable).
+If the parent namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the table already exists, return error code `5` (TableAlreadyExists).
+
+If the HMS connection fails, return error code `17` (ServiceUnavailable).
 
 ### ListTables
 
@@ -135,18 +141,20 @@ The implementation:
 
 **Error Handling:**
 
-If the namespace does not exist, return error code `1` (NamespaceNotFound). If the HMS connection fails, return error code `17` (ServiceUnavailable).
+If the namespace does not exist, return error code `1` (NamespaceNotFound).
+
+If the HMS connection fails, return error code `17` (ServiceUnavailable).
 
 ### DescribeTable
 
-Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. When `load_detailed_metadata=false`, only the table location and storage_options are returned; other fields (version, table_uri, schema, stats) are null.
+Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. When `load_detailed_metadata=false`, only the table location is returned; other fields (version, table_uri, schema, stats) are null.
 
 The implementation:
 
 1. Parse the table identifier
 2. Retrieve the Table object from HMS
 3. Validate that it is a Lance table (check `table_type=lance`)
-4. Return the table location from `storageDescriptor.location` and storage_options from `parameters`
+4. Return the table location from `storageDescriptor.location`
 
 **Error Handling:**
 
@@ -168,4 +176,8 @@ The implementation:
 
 **Error Handling:**
 
-If the table does not exist, return error code `4` (TableNotFound). If the table is not a Lance table, return error code `13` (InvalidInput). If the HMS connection fails, return error code `17` (ServiceUnavailable).
+If the table does not exist, return error code `4` (TableNotFound).
+
+If the table is not a Lance table, return error code `13` (InvalidInput).
+
+If the HMS connection fails, return error code `17` (ServiceUnavailable).

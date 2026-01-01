@@ -12,10 +12,10 @@ import pyarrow.ipc as ipc
 
 from lance.namespace import LanceNamespace
 from lance_namespace_urllib3_client.models import (
-    CreateEmptyTableRequest,
-    CreateEmptyTableResponse,
     CreateNamespaceRequest,
     CreateNamespaceResponse,
+    DeclareTableRequest,
+    DeclareTableResponse,
     DeregisterTableRequest,
     DeregisterTableResponse,
     DescribeNamespaceRequest,
@@ -422,10 +422,8 @@ class UnityNamespace(LanceNamespace):
         except Exception as e:
             raise InternalException(f"Failed to list tables: {e}")
 
-    def create_empty_table(
-        self, request: CreateEmptyTableRequest
-    ) -> CreateEmptyTableResponse:
-        """Create an empty table (metadata only operation)."""
+    def declare_table(self, request: DeclareTableRequest) -> DeclareTableResponse:
+        """Declare a table (metadata only operation)."""
         table_id = self._parse_identifier(request.id)
 
         if len(table_id) != 3:
@@ -473,20 +471,20 @@ class UnityNamespace(LanceNamespace):
                 "/tables", create_table, response_converter=_parse_table_info
             )
 
-            logger.info(f"Created empty table: {catalog}.{schema}.{table}")
+            logger.info(f"Declared table: {catalog}.{schema}.{table}")
 
-            return CreateEmptyTableResponse(location=table_path)
+            return DeclareTableResponse(location=table_path)
 
         except RestClientException as e:
             if e.is_conflict():
                 raise TableAlreadyExistsException(
                     f"Table already exists: {'.'.join(request.id)}"
                 )
-            raise InternalException(f"Failed to create empty table: {e}")
+            raise InternalException(f"Failed to declare table: {e}")
         except Exception as e:
             if isinstance(e, (TableAlreadyExistsException, InvalidInputException)):
                 raise
-            raise InternalException(f"Failed to create empty table: {e}")
+            raise InternalException(f"Failed to declare table: {e}")
 
     def describe_table(self, request: DescribeTableRequest) -> DescribeTableResponse:
         """Describe a table."""

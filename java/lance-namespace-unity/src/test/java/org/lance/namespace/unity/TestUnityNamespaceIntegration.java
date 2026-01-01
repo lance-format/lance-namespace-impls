@@ -15,10 +15,10 @@ package org.lance.namespace.unity;
 
 import org.lance.namespace.errors.InvalidInputException;
 import org.lance.namespace.errors.LanceNamespaceException;
-import org.lance.namespace.model.CreateEmptyTableRequest;
-import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.CreateNamespaceResponse;
+import org.lance.namespace.model.DeclareTableRequest;
+import org.lance.namespace.model.DeclareTableResponse;
 import org.lance.namespace.model.DeregisterTableRequest;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
@@ -236,12 +236,12 @@ public class TestUnityNamespaceIntegration {
     String tableName =
         "test_table_" + UUID.randomUUID().toString().substring(0, 8).replace("-", "");
 
-    // Create empty table
-    CreateEmptyTableRequest createRequest = new CreateEmptyTableRequest();
+    // Declare table
+    DeclareTableRequest createRequest = new DeclareTableRequest();
     createRequest.setId(Arrays.asList(TEST_CATALOG, testSchema, tableName));
     createRequest.setLocation("/tmp/lance-integration-test/" + testSchema + "/" + tableName);
 
-    CreateEmptyTableResponse createResponse = namespace.createEmptyTable(createRequest);
+    DeclareTableResponse createResponse = namespace.declareTable(createRequest);
     assertThat(createResponse.getLocation()).isNotNull();
 
     // Describe table

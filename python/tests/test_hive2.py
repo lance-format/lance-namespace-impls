@@ -195,11 +195,10 @@ class TestHive2Namespace:
         mock_client_instance.get_all_tables.assert_called_once_with("test_db")
 
     def test_describe_table(self, hive_namespace, mock_hive_client):
-        """Test describing a table returns location and storage_options only.
+        """Test describing a table returns location only.
 
         Note: load_detailed_metadata=false is the only supported mode, which means
-        only location and storage_options are returned. Other fields (version, schema, etc.)
-        are not populated.
+        only location is returned. Other fields (version, schema, etc.) are not populated.
         """
         mock_table = MagicMock()
         mock_table.sd.location = "/tmp/warehouse/test_db.db/test_table"
@@ -217,10 +216,6 @@ class TestHive2Namespace:
         response = hive_namespace.describe_table(request)
 
         assert response.location == "/tmp/warehouse/test_db.db/test_table"
-        # Only location and storage_options are returned (load_detailed_metadata=false)
-        assert (
-            response.storage_options == {}
-        )  # Empty since no storage.* properties configured
 
         mock_client_instance.get_table.assert_called_once_with("test_db", "test_table")
 
@@ -300,8 +295,6 @@ class TestHive2Namespace:
                     ugi="user:group1,group2",
                     **{
                         "client.pool-size": "5",
-                        "storage.access_key_id": "test-key",
-                        "storage.secret_access_key": "test-secret",
                     },
                 )
 
@@ -315,8 +308,6 @@ class TestHive2Namespace:
                 assert restored.root == "/tmp/warehouse"
                 assert restored.ugi == "user:group1,group2"
                 assert restored.pool_size == 5
-                assert restored.storage_properties["access_key_id"] == "test-key"
-                assert restored.storage_properties["secret_access_key"] == "test-secret"
 
                 assert restored._client is None
 

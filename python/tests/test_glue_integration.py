@@ -164,7 +164,7 @@ class TestGlueNamespaceIntegration(unittest.TestCase):
     def test_table_operations(self):
         """Test table CRUD operations."""
         from lance_namespace_urllib3_client.models import (
-            CreateEmptyTableRequest,
+            DeclareTableRequest,
             DescribeTableRequest,
             DeregisterTableRequest,
             ListTablesRequest,
@@ -174,12 +174,12 @@ class TestGlueNamespaceIntegration(unittest.TestCase):
         table_name = f"test_table_{uuid.uuid4().hex[:8]}"
         table_location = f"{self.s3_root}/{db_name}/{table_name}.lance"
 
-        # Create empty table (DeclareTable)
-        create_request = CreateEmptyTableRequest()
+        # Declare table
+        create_request = DeclareTableRequest()
         create_request.id = [db_name, table_name]
         create_request.location = table_location
 
-        create_response = self.namespace.create_empty_table(create_request)
+        create_response = self.namespace.declare_table(create_request)
         self.assertIsNotNone(create_response.location)
         self.assertEqual(create_response.location, table_location)
 
@@ -203,7 +203,7 @@ class TestGlueNamespaceIntegration(unittest.TestCase):
     def test_multiple_tables_in_namespace(self):
         """Test creating and listing multiple tables in a namespace."""
         from lance_namespace_urllib3_client.models import (
-            CreateEmptyTableRequest,
+            DeclareTableRequest,
             DeregisterTableRequest,
             ListTablesRequest,
         )
@@ -213,10 +213,10 @@ class TestGlueNamespaceIntegration(unittest.TestCase):
 
         for table_name in table_names:
             table_location = f"{self.s3_root}/{db_name}/{table_name}.lance"
-            create_request = CreateEmptyTableRequest()
+            create_request = DeclareTableRequest()
             create_request.id = [db_name, table_name]
             create_request.location = table_location
-            self.namespace.create_empty_table(create_request)
+            self.namespace.declare_table(create_request)
 
         list_request = ListTablesRequest()
         list_request.id = [db_name]

@@ -26,8 +26,8 @@ from lance_namespace_urllib3_client.models import (
     DropNamespaceResponse,
     ListTablesRequest,
     ListTablesResponse,
-    CreateEmptyTableRequest,
-    CreateEmptyTableResponse,
+    DeclareTableRequest,
+    DeclareTableResponse,
     DescribeTableRequest,
     DescribeTableResponse,
     DeregisterTableRequest,
@@ -98,9 +98,11 @@ class GlueNamespace(LanceNamespace):
         """Initialize the Glue namespace.
 
         Args:
-            catalog_id: Glue catalog ID (AWS account ID)
+            catalog_id: Glue catalog ID to use as starting point. When not specified,
+                it is resolved to the caller's AWS account ID.
             endpoint: Optional custom Glue endpoint
-            region: AWS region for Glue
+            region: AWS region for Glue. When not specified, it is resolved to the
+                default AWS region in the caller's environment.
             access_key_id: AWS access key ID
             secret_access_key: AWS secret access key
             session_token: AWS session token
@@ -378,10 +380,8 @@ class GlueNamespace(LanceNamespace):
                 raise
             raise RuntimeError(f"Failed to describe table: {e}")
 
-    def create_empty_table(
-        self, request: CreateEmptyTableRequest
-    ) -> CreateEmptyTableResponse:
-        """Create an empty table (metadata only) in Glue catalog."""
+    def declare_table(self, request: DeclareTableRequest) -> DeclareTableResponse:
+        """Declare a table (metadata only) in Glue catalog."""
         database_name, table_name = self._parse_table_identifier(request.id)
 
         # Determine table location
@@ -426,10 +426,6 @@ class GlueNamespace(LanceNamespace):
             },
         }
 
-        # Add additional properties if specified
-        if request.properties:
-            table_input["Parameters"].update(request.properties)
-
         try:
             self.glue.create_table(DatabaseName=database_name, TableInput=table_input)
         except Exception as e:
@@ -437,9 +433,9 @@ class GlueNamespace(LanceNamespace):
                 raise RuntimeError(
                     f"Table already exists: {database_name}.{table_name}"
                 )
-            raise RuntimeError(f"Failed to create empty table: {e}")
+            raise RuntimeError(f"Failed to declare table: {e}")
 
-        return CreateEmptyTableResponse(location=table_location)
+        return DeclareTableResponse(location=table_location)
 
     def deregister_table(
         self, request: DeregisterTableRequest
