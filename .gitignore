@@ -121,3 +121,8 @@ docs/site
 
 # Hive metastore
 metastore_db/
+derby.log
+
+# Docker downloaded dependencies
+docker/hive2/postgresql-*.jar
+docker/hive3/postgresql-*.jar
