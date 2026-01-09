@@ -424,7 +424,11 @@ class GravitinoNamespace(LanceNamespace):
             raise InternalException(f"Failed to declare table: {e}")
 
     def describe_table(self, request: DescribeTableRequest) -> DescribeTableResponse:
-        """Describe a table."""
+        """Describe a table.
+        
+        Uses the Gravitino Lance REST API /table/{id}/describe endpoint to retrieve
+        table metadata including location, schema, properties, and storage options.
+        """
         if request.load_detailed_metadata:
             raise InvalidInputException(
                 "load_detailed_metadata=true is not supported for this implementation"
@@ -442,32 +446,30 @@ class GravitinoNamespace(LanceNamespace):
         try:
             encoded_path = self._encode_namespace_path([catalog, schema, table_name])
 
-            # Check if table exists first
-            exists_request = {"id": [catalog, schema, table_name]}
-            exists_response = self.rest_client.post(
-                f"/table/{encoded_path}/exists", exists_request
+            # Use the Gravitino Lance REST API describe endpoint
+            describe_request = {"id": [catalog, schema, table_name]}
+            
+            describe_response = self.rest_client.post(
+                f"/table/{encoded_path}/describe", describe_request
             )
 
-            # Handle different response formats for exists check
-            table_exists = False
-            if exists_response:
-                if isinstance(exists_response, dict):
-                    table_exists = exists_response.get("exists", False)
-                elif isinstance(exists_response, bool):
-                    table_exists = exists_response
-                else:
-                    # If we get any non-error response, assume table exists
-                    table_exists = True
-
-            if not table_exists:
+            if not describe_response:
                 raise TableNotFoundException(f"Table not found: {'.'.join(request.id)}")
 
-            # For Gravitino, we need to get table metadata through the table operations
-            # Since Gravitino Lance REST doesn't have a direct describe endpoint,
-            # we'll return basic information
+            # Extract information from the response
+            location = describe_response.get("location")
+            storage_options = describe_response.get("storage_options", {})
+            
+            # Additional metadata that might be useful (though not part of DescribeTableResponse)
+            properties = describe_response.get("properties", {})
+            schema_info = describe_response.get("schema", {})
+            version = describe_response.get("version")
+            
+            logger.info(f"Described table: {'.'.join(table_id)}, location: {location}")
+
             return DescribeTableResponse(
-                location=None,  # Location would need to be retrieved from table metadata
-                storage_options={},
+                location=location,
+                storage_options=storage_options,
             )
 
         except RestClientException as e:

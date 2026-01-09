@@ -52,7 +52,7 @@ def main():
         sys.exit(1)
 
     # Example catalog and schema names
-    catalog_name = "lance_catalog111"
+    catalog_name = "lance_catalog"
     schema_name = "example_schema"
     table_name = "my_lance_table"
 
@@ -135,6 +135,7 @@ def main():
         )
         try:
             table_description = namespace.describe_table(describe_table_request)
+            print(f"   Successfully described table")
             print(f"   Table location: {table_description.location}")
             print(f"   Storage options: {table_description.storage_options}")
         except Exception as e:
