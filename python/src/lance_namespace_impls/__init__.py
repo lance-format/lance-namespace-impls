@@ -6,6 +6,7 @@ Lance Namespace Implementations.
 
 This package provides third-party catalog implementations for Lance Namespace:
 - GlueNamespace: AWS Glue Data Catalog
+- GravitinoNamespace: Apache Gravitino Lance REST Service
 - Hive2Namespace: Apache Hive 2.x Metastore
 - Hive3Namespace: Apache Hive 3.x Metastore (with catalog support)
 - IcebergNamespace: Apache Iceberg REST Catalog
@@ -19,6 +20,7 @@ Shared infrastructure:
 """
 
 from lance_namespace_impls.glue import GlueNamespace
+from lance_namespace_impls.gravitino import GravitinoNamespace
 from lance_namespace_impls.hive2 import Hive2Namespace
 from lance_namespace_impls.hive3 import Hive3Namespace
 from lance_namespace_impls.iceberg import IcebergNamespace
@@ -38,6 +40,7 @@ from lance_namespace_impls.rest_client import (
 
 __all__ = [
     "GlueNamespace",
+    "GravitinoNamespace",
     "Hive2Namespace",
     "Hive3Namespace",
     "IcebergNamespace",
