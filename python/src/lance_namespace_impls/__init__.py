@@ -6,6 +6,7 @@ Lance Namespace Implementations.
 
 This package provides third-party catalog implementations for Lance Namespace:
 - GlueNamespace: AWS Glue Data Catalog
+- GooseFSNamespace: Tencent GooseFS Table Master
 - Hive2Namespace: Apache Hive 2.x Metastore
 - Hive3Namespace: Apache Hive 3.x Metastore (with catalog support)
 - IcebergNamespace: Apache Iceberg REST Catalog
@@ -20,6 +21,7 @@ Shared infrastructure:
 
 from lance_namespace import register_namespace_impl
 from lance_namespace_impls.glue import GlueNamespace
+from lance_namespace_impls.goosefs import GooseFSNamespace
 from lance_namespace_impls.hive2 import Hive2Namespace
 from lance_namespace_impls.hive3 import Hive3Namespace
 from lance_namespace_impls.iceberg import IcebergNamespace
@@ -46,6 +48,7 @@ register_namespace_impl("unity", "lance_namespace_impls.unity.UnityNamespace")
 
 __all__ = [
     "GlueNamespace",
+    "GooseFSNamespace",
     "Hive2Namespace",
     "Hive3Namespace",
     "IcebergNamespace",
