@@ -27,9 +27,45 @@ values = ["stable", "alpha", "beta", "rc"]
 optional_value = "0"
 first_value = "0"
 
-# Java pom.xml
+# Java pom.xml (root)
 [[tool.bumpversion.files]]
 filename = "java/pom.xml"
+search = "<version>{current_version}</version>"
+replace = "<version>{new_version}</version>"
+
+# Java child pom.xml (parent version references)
+[[tool.bumpversion.files]]
+filename = "java/lance-namespace-impls-core/pom.xml"
+search = "<version>{current_version}</version>"
+replace = "<version>{new_version}</version>"
+
+[[tool.bumpversion.files]]
+filename = "java/lance-namespace-glue/pom.xml"
+search = "<version>{current_version}</version>"
+replace = "<version>{new_version}</version>"
+
+[[tool.bumpversion.files]]
+filename = "java/lance-namespace-hive2/pom.xml"
+search = "<version>{current_version}</version>"
+replace = "<version>{new_version}</version>"
+
+[[tool.bumpversion.files]]
+filename = "java/lance-namespace-hive3/pom.xml"
+search = "<version>{current_version}</version>"
+replace = "<version>{new_version}</version>"
+
+[[tool.bumpversion.files]]
+filename = "java/lance-namespace-iceberg/pom.xml"
+search = "<version>{current_version}</version>"
+replace = "<version>{new_version}</version>"
+
+[[tool.bumpversion.files]]
+filename = "java/lance-namespace-unity/pom.xml"
+search = "<version>{current_version}</version>"
+replace = "<version>{new_version}</version>"
+
+[[tool.bumpversion.files]]
+filename = "java/lance-namespace-polaris/pom.xml"
 search = "<version>{current_version}</version>"
 replace = "<version>{new_version}</version>"
 
