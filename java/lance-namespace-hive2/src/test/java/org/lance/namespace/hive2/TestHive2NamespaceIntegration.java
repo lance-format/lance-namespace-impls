@@ -223,7 +223,7 @@ public class TestHive2NamespaceIntegration {
     // Declare table again for dropping.
     createResponse = namespace.declareTable(createRequest);
     assertThat(createResponse.getLocation()).isNotNull();
-    
+
     // Drop table
     DropTableRequest dropTableRequest = new DropTableRequest();
     dropTableRequest.setId(Arrays.asList(testDatabase, tableName));
