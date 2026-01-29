@@ -34,6 +34,8 @@ import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 import org.lance.namespace.model.DropNamespaceRequest;
 import org.lance.namespace.model.DropNamespaceResponse;
+import org.lance.namespace.model.DropTableRequest;
+import org.lance.namespace.model.DropTableResponse;
 import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
@@ -262,6 +264,16 @@ public class Hive2Namespace implements LanceNamespace {
     }
 
     Hive2Util.validateLanceTable(hmsTable.get());
+  }
+
+  @Override
+  public DropTableResponse dropTable(DropTableRequest request) {
+    ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
+    String location = doDropTable(tableId);
+    DropTableResponse response = new DropTableResponse();
+    response.setId(request.getId());
+    response.setLocation(location);
+    return response;
   }
 
   @Override
