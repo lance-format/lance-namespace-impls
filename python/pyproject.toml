@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lance-namespace-impls"
-version = "0.1.1-beta.1"
+version = "0.1.2"
 description = "Third-party catalog implementations for Lance Namespace"
 readme = "README.md"
 license = { text = "Apache-2.0" }
