@@ -22,20 +22,6 @@
             <groupId>org.lance</groupId>
             <artifactId>lance-namespace-impls-core</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.lance</groupId>
-            <artifactId>lance-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.lance</groupId>
-            <artifactId>lance-namespace-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.lance</groupId>
-            <artifactId>lance-namespace-apache-client</artifactId>
-        </dependency>
-
-
         <!-- Jackson for JSON processing -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>

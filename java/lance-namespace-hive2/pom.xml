@@ -19,18 +19,6 @@
 
     <dependencies>
       <dependency>
-        <groupId>org.lance</groupId>
-        <artifactId>lance-core</artifactId>
-      </dependency>
-      <dependency>
-        <groupId>org.lance</groupId>
-        <artifactId>lance-namespace-core</artifactId>
-      </dependency>
-      <dependency>
-        <groupId>org.lance</groupId>
-        <artifactId>lance-namespace-apache-client</artifactId>
-      </dependency>
-      <dependency>
         <groupId>org.apache.hive</groupId>
         <artifactId>hive-metastore</artifactId>
         <version>2.3.9</version>
@@ -47,6 +35,14 @@
             <groupId>org.pentaho</groupId>
             <artifactId>pentaho-aggdesigner-algorithm</artifactId>
           </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
+          </exclusion>
         </exclusions>
       </dependency>
       <dependency>
@@ -62,6 +58,14 @@
             <groupId>org.pentaho</groupId>
             <artifactId>pentaho-aggdesigner-algorithm</artifactId>
           </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
+          </exclusion>
         </exclusions>
       </dependency>
       <dependency>
@@ -76,6 +80,14 @@
           <exclusion>
             <groupId>org.pentaho</groupId>
             <artifactId>pentaho-aggdesigner-algorithm</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
           </exclusion>
         </exclusions>
       </dependency>
@@ -100,6 +112,14 @@
             <groupId>org.pentaho</groupId>
             <artifactId>pentaho-aggdesigner-algorithm</artifactId>
           </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
+          </exclusion>
         </exclusions>
         <classifier>core</classifier>
       </dependency>
@@ -114,6 +134,14 @@
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
           </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
+          </exclusion>
         </exclusions>
       </dependency>
       <dependency>
@@ -124,6 +152,10 @@
           <exclusion>
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty</artifactId>
           </exclusion>
         </exclusions>
       </dependency>
@@ -136,6 +168,14 @@
           <exclusion>
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
           </exclusion>
         </exclusions>
       </dependency>
