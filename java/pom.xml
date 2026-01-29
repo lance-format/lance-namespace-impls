@@ -57,8 +57,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <lance-core.version>2.0.0-beta.4</lance-core.version>
-        <lance-namespace.version>0.4.2</lance-namespace.version>
+        <lance-core.version>2.0.0-rc.3</lance-core.version>
         <arrow.version>15.0.0</arrow.version>
         <junit-version>5.8.2</junit-version>
 
@@ -95,27 +94,20 @@
         <module>lance-namespace-polaris</module>
     </modules>
 
+    <dependencies>
+        <dependency>
+            <groupId>org.lance</groupId>
+            <artifactId>lance-core</artifactId>
+            <version>${lance-core.version}</version>
+        </dependency>
+    </dependencies>
+
     <dependencyManagement>
         <dependencies>
             <dependency>
                 <groupId>org.lance</groupId>
                 <artifactId>lance-namespace-impls-core</artifactId>
                 <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.lance</groupId>
-                <artifactId>lance-core</artifactId>
-                <version>${lance-core.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.lance</groupId>
-                <artifactId>lance-namespace-core</artifactId>
-                <version>${lance-namespace.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.lance</groupId>
-                <artifactId>lance-namespace-apache-client</artifactId>
-                <version>${lance-namespace.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.arrow</groupId>

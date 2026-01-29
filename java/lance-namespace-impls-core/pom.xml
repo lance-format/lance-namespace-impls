@@ -15,12 +15,6 @@
     <description>Core utilities for Lance Namespace implementations including RestClient</description>
 
     <dependencies>
-        <!-- Lance Namespace Core -->
-        <dependency>
-            <groupId>org.lance</groupId>
-            <artifactId>lance-namespace-core</artifactId>
-        </dependency>
-
         <!-- HTTP Client -->
         <dependency>
             <groupId>org.apache.httpcomponents.client5</groupId>
