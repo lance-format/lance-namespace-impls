@@ -596,9 +596,11 @@ public class Hive3Namespace implements LanceNamespace {
       Hive3Util.validateLanceTable(hmsTable.get());
       String location = hmsTable.get().getSd().getLocation();
 
+      final boolean deleteData = true;
+      final boolean ignoreUnknownTable = true;
       clientPool.run(
           client -> {
-            client.dropTable(catalog, db, tableName, false, true);
+            client.dropTable(catalog, db, tableName, deleteData, ignoreUnknownTable);
             return null;
           });
 

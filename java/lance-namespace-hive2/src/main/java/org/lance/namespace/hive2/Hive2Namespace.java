@@ -553,9 +553,11 @@ public class Hive2Namespace implements LanceNamespace {
       Hive2Util.validateLanceTable(hmsTable.get());
       String location = hmsTable.get().getSd().getLocation();
 
+      final boolean deleteData = true;
+      final boolean ignoreUnknownTable = true;
       clientPool.run(
           client -> {
-            client.dropTable(db, tableName, false, true);
+            client.dropTable(db, tableName, deleteData, ignoreUnknownTable);
             return null;
           });
 
