@@ -467,11 +467,11 @@ public class Hive2Namespace implements LanceNamespace {
       StorageDescriptor sd = new StorageDescriptor();
       sd.setLocation(location);
       sd.setCols(Lists.newArrayList());
-      sd.setInputFormat("com.lancedb.lance.mapred.LanceInputFormat");
-      sd.setOutputFormat("com.lancedb.lance.mapred.LanceOutputFormat");
+      sd.setInputFormat("org.lance.mapred.LanceInputFormat");
+      sd.setOutputFormat("org.lance.mapred.LanceOutputFormat");
       org.apache.hadoop.hive.metastore.api.SerDeInfo serdeInfo =
           new org.apache.hadoop.hive.metastore.api.SerDeInfo();
-      serdeInfo.setSerializationLib("com.lancedb.lance.mapred.LanceSerDe");
+      serdeInfo.setSerializationLib("org.lance.mapred.LanceSerDe");
       sd.setSerdeInfo(serdeInfo);
       table.setSd(sd);
 
