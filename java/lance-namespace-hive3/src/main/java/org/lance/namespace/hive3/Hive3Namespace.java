@@ -35,6 +35,8 @@ import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 import org.lance.namespace.model.DropNamespaceRequest;
 import org.lance.namespace.model.DropNamespaceResponse;
+import org.lance.namespace.model.DropTableRequest;
+import org.lance.namespace.model.DropTableResponse;
 import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
@@ -330,13 +332,28 @@ public class Hive3Namespace implements LanceNamespace {
   }
 
   @Override
+  public DropTableResponse dropTable(DropTableRequest request) {
+    ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
+
+    ValidationUtil.checkArgument(
+        tableId.levels() == 3, "Expect 3-level table identifier but get %s", tableId);
+
+    String location = doDropTable(tableId, true);
+
+    DropTableResponse response = new DropTableResponse();
+    response.setId(request.getId());
+    response.setLocation(location);
+    return response;
+  }
+
+  @Override
   public DeregisterTableResponse deregisterTable(DeregisterTableRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
 
     ValidationUtil.checkArgument(
         tableId.levels() == 3, "Expect 3-level table identifier but get %s", tableId);
 
-    String location = doDropTable(tableId);
+    String location = doDropTable(tableId, false);
 
     DeregisterTableResponse response = new DeregisterTableResponse();
     response.setId(request.getId());
@@ -581,7 +598,7 @@ public class Hive3Namespace implements LanceNamespace {
     }
   }
 
-  protected String doDropTable(ObjectIdentifier id) {
+  protected String doDropTable(ObjectIdentifier id, boolean deleteData) {
     String catalog = id.levelAtListPos(0).toLowerCase();
     String db = id.levelAtListPos(1).toLowerCase();
     String tableName = id.levelAtListPos(2).toLowerCase();
@@ -596,11 +613,9 @@ public class Hive3Namespace implements LanceNamespace {
       Hive3Util.validateLanceTable(hmsTable.get());
       String location = hmsTable.get().getSd().getLocation();
 
-      final boolean deleteData = true;
-      final boolean ignoreUnknownTable = true;
       clientPool.run(
           client -> {
-            client.dropTable(catalog, db, tableName, deleteData, ignoreUnknownTable);
+            client.dropTable(catalog, db, tableName, deleteData, true /* ignoreUnknownTable */);
             return null;
           });
 

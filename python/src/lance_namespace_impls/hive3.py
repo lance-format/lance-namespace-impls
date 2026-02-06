@@ -74,6 +74,8 @@ from lance_namespace_urllib3_client.models import (
     CreateNamespaceResponse,
     DropNamespaceRequest,
     DropNamespaceResponse,
+    DropTableRequest,
+    DropTableResponse,
     ListTablesRequest,
     ListTablesResponse,
     DeclareTableRequest,
@@ -475,6 +477,32 @@ class Hive3Namespace(LanceNamespace):
             if NoSuchObjectException and isinstance(e, NoSuchObjectException):
                 raise ValueError(f"Table {request.id} does not exist")
             logger.error(f"Failed to describe table {request.id}: {e}")
+            raise
+
+    def drop_table(self, request: DropTableRequest) -> DropTableResponse:
+        """Drop a table and delete its data."""
+        try:
+            catalog, database, table_name = self._normalize_identifier(request.id)
+
+            with self.client as client:
+                table = client.get_table(database, table_name)
+
+                if not table.parameters:
+                    raise ValueError(f"Table {request.id} is not a Lance table")
+                table_type = table.parameters.get(TABLE_TYPE_KEY, "").lower()
+                if table_type != LANCE_TABLE_FORMAT:
+                    raise ValueError(f"Table {request.id} is not a Lance table")
+
+                location = table.sd.location if table.sd else None
+
+                client.drop_table(database, table_name, deleteData=True)
+
+                return DropTableResponse(location=location)
+
+        except Exception as e:
+            if NoSuchObjectException and isinstance(e, NoSuchObjectException):
+                raise ValueError(f"Table {request.id} does not exist")
+            logger.error(f"Failed to drop table {request.id}: {e}")
             raise
 
     def deregister_table(

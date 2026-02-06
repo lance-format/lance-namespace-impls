@@ -267,16 +267,6 @@ public class Hive2Namespace implements LanceNamespace {
   }
 
   @Override
-  public DropTableResponse dropTable(DropTableRequest request) {
-    ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
-    String location = doDropTable(tableId);
-    DropTableResponse response = new DropTableResponse();
-    response.setId(request.getId());
-    response.setLocation(location);
-    return response;
-  }
-
-  @Override
   public DescribeTableResponse describeTable(DescribeTableRequest request) {
     if (Boolean.TRUE.equals(request.getLoadDetailedMetadata())) {
       throw new InvalidInputException(
@@ -325,13 +315,28 @@ public class Hive2Namespace implements LanceNamespace {
   }
 
   @Override
+  public DropTableResponse dropTable(DropTableRequest request) {
+    ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
+
+    ValidationUtil.checkArgument(
+        tableId.levels() == 2, "Expect 2-level table identifier but get %s", tableId);
+
+    String location = doDropTable(tableId, true);
+
+    DropTableResponse response = new DropTableResponse();
+    response.setId(request.getId());
+    response.setLocation(location);
+    return response;
+  }
+
+  @Override
   public DeregisterTableResponse deregisterTable(DeregisterTableRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
 
     ValidationUtil.checkArgument(
         tableId.levels() == 2, "Expect 2-level table identifier but get %s", tableId);
 
-    String location = doDropTable(tableId);
+    String location = doDropTable(tableId, false);
 
     DeregisterTableResponse response = new DeregisterTableResponse();
     response.setId(request.getId());
@@ -537,7 +542,7 @@ public class Hive2Namespace implements LanceNamespace {
     }
   }
 
-  protected String doDropTable(ObjectIdentifier id) {
+  protected String doDropTable(ObjectIdentifier id, boolean deleteData) {
     String db = id.levelAtListPos(0).toLowerCase();
     String tableName = id.levelAtListPos(1).toLowerCase();
 
@@ -553,11 +558,9 @@ public class Hive2Namespace implements LanceNamespace {
       Hive2Util.validateLanceTable(hmsTable.get());
       String location = hmsTable.get().getSd().getLocation();
 
-      final boolean deleteData = true;
-      final boolean ignoreUnknownTable = true;
       clientPool.run(
           client -> {
-            client.dropTable(db, tableName, deleteData, ignoreUnknownTable);
+            client.dropTable(db, tableName, deleteData, true /* ignoreUnknownTable */);
             return null;
           });
 
