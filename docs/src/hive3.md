@@ -4,7 +4,7 @@ This document describes how the Hive 3.x MetaStore implements the Lance Namespac
 
 ## Background
 
-Apache Hive MetaStore (HMS) is a centralized metadata repository for Apache Hive that stores schema and partition information for Hive tables. Hive 3.x introduces a 3-level namespace hierarchy (catalog.database.table) with an additional catalog level. For details on HMS 3.x, see the [HMS AdminManual 3.x](https://hive.apache.org/docs/latest/adminmanual-metastore-3-0-administration_75978150/).
+Apache Hive MetaStore (HMS) is a centralized metadata repository for Apache Hive that stores schema and partition information for Hive tables. Hive 3+.x introduces a 3-level namespace hierarchy (catalog.database.table) with an additional catalog level. For details on HMS 3+.x, see the [HMS AdminManual 3.x](https://hive.apache.org/docs/latest/adminmanual-metastore-3-0-administration_75978150/).
 
 ## Namespace Implementation Configuration Properties
 
@@ -162,6 +162,24 @@ The implementation:
 2. Retrieve the Table object from HMS
 3. Validate that it is a Lance table (check `table_type=lance`)
 4. Return the table location from `storageDescriptor.location`
+
+**Error Handling:**
+
+If the table does not exist, return error code `4` (TableNotFound).
+
+If the table is not a Lance table, return error code `13` (InvalidInput).
+
+If the HMS connection fails, return error code `17` (ServiceUnavailable).
+
+### DropTable
+
+Removes a Lance table from HMS and deletes the underlying data.
+
+The implementation:
+
+1. Parse the table identifier
+2. Retrieve the Table object and validate it is a Lance table
+3. Drop the table from HMS with `deleteData=true`, which removes both the metadata and the underlying Lance table data
 
 **Error Handling:**
 
