@@ -171,6 +171,24 @@ If the table is not a Lance table, return error code `13` (InvalidInput).
 
 If the HMS connection fails, return error code `17` (ServiceUnavailable).
 
+### DropTable
+
+Removes a Lance table from HMS and deletes the underlying data.
+
+The implementation:
+
+1. Parse the table identifier
+2. Retrieve the Table object and validate it is a Lance table
+3. Drop the table from HMS with `deleteData=true`, which removes both the metadata and the underlying Lance table data
+
+**Error Handling:**
+
+If the table does not exist, return error code `4` (TableNotFound).
+
+If the table is not a Lance table, return error code `13` (InvalidInput).
+
+If the HMS connection fails, return error code `17` (ServiceUnavailable).
+
 ### DeregisterTable
 
 Removes a Lance table registration from HMS without deleting the underlying data.
