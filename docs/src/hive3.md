@@ -4,7 +4,7 @@ This document describes how the Hive 3.x MetaStore implements the Lance Namespac
 
 ## Background
 
-Apache Hive MetaStore (HMS) is a centralized metadata repository for Apache Hive that stores schema and partition information for Hive tables. Hive 3.x introduces a 3-level namespace hierarchy (catalog.database.table) with an additional catalog level. For details on HMS 3.x, see the [HMS AdminManual 3.x](https://hive.apache.org/docs/latest/adminmanual-metastore-3-0-administration_75978150/).
+Apache Hive MetaStore (HMS) is a centralized metadata repository for Apache Hive that stores schema and partition information for Hive tables. Hive 3+.x introduces a 3-level namespace hierarchy (catalog.database.table) with an additional catalog level. For details on HMS 3+.x, see the [HMS AdminManual 3.x](https://hive.apache.org/docs/latest/adminmanual-metastore-3-0-administration_75978150/).
 
 ## Namespace Implementation Configuration Properties
 
