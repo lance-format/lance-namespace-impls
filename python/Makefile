@@ -33,8 +33,8 @@ test-glue:
 
 .PHONY: lint-hive
 lint-hive:
-	uv run ruff check src/lance_namespace_impls/hive2.py src/lance_namespace_impls/hive3.py tests/test_hive2.py tests/test_hive3.py tests/test_hive2_integration.py tests/test_hive3_integration.py
-	uv run ruff format --check src/lance_namespace_impls/hive2.py src/lance_namespace_impls/hive3.py tests/test_hive2.py tests/test_hive3.py tests/test_hive2_integration.py tests/test_hive3_integration.py
+	uv run ruff check src/lance_namespace_impls/hive2.py src/lance_namespace_impls/hive3.py src/lance_namespace_impls/hive2_page_util.py tests/test_hive2.py tests/test_hive3.py tests/test_hive2_page_util.py tests/test_hive2_integration.py tests/test_hive3_integration.py
+	uv run ruff format --check src/lance_namespace_impls/hive2.py src/lance_namespace_impls/hive3.py src/lance_namespace_impls/hive2_page_util.py tests/test_hive2.py tests/test_hive3.py tests/test_hive2_page_util.py tests/test_hive2_integration.py tests/test_hive3_integration.py
 
 .PHONY: install-hive
 install-hive:
@@ -42,7 +42,7 @@ install-hive:
 
 .PHONY: test-hive
 test-hive:
-	uv run pytest tests/test_hive2.py tests/test_hive3.py
+	uv run pytest tests/test_hive2.py tests/test_hive3.py tests/test_hive2_page_util.py
 
 # ============================================================================
 # Unity

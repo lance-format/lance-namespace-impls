@@ -85,6 +85,7 @@ from lance_namespace_urllib3_client.models import (
 )
 
 from lance_namespace_impls.rest_client import InvalidInputException
+from lance_namespace_impls.hive2_page_util import apply_list_tables_pagination
 
 logger = logging.getLogger(__name__)
 
@@ -326,11 +327,15 @@ class Hive2Namespace(LanceNamespace):
             raise
 
     def list_tables(self, request: ListTablesRequest) -> ListTablesResponse:
-        """List tables in a database."""
+        """List tables in a database.
+
+        Pagination matches the Java Hive2Namespace implementation, ``limit`` defaults to 100 when unset
+        or non-positive.
+        """
         try:
             # Root namespace has no tables
             if self._is_root_namespace(request.id):
-                return ListTablesResponse(tables=[])
+                return ListTablesResponse(tables=[], page_token=None)
 
             if len(request.id) != 1:
                 raise ValueError(f"Invalid namespace identifier: {request.id}")
@@ -357,7 +362,11 @@ class Hive2Namespace(LanceNamespace):
                         # Skip tables we can't read
                         continue
 
-                return ListTablesResponse(tables=tables)
+                tables.sort()
+                page_items, next_token = apply_list_tables_pagination(
+                    tables, request.page_token, request.limit
+                )
+                return ListTablesResponse(tables=page_items, page_token=next_token)
         except Exception as e:
             if NoSuchObjectException and isinstance(e, NoSuchObjectException):
                 raise ValueError(f"Namespace {request.id} does not exist")
