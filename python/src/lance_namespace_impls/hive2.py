@@ -327,11 +327,7 @@ class Hive2Namespace(LanceNamespace):
             raise
 
     def list_tables(self, request: ListTablesRequest) -> ListTablesResponse:
-        """List tables in a database.
-
-        Pagination matches the Java Hive2Namespace implementation, ``limit`` defaults to 100 when unset
-        or non-positive.
-        """
+        """List tables in a database."""
         try:
             # Root namespace has no tables
             if self._is_root_namespace(request.id):

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-DEFAULT_LIST_TABLES_PAGE_SIZE = 100
+DEFAULT_LIST_TABLES_PAGE_SIZE = 20
 
 
 def normalize_list_tables_page_size(limit: Optional[int]) -> int:

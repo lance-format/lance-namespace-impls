@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright The Lance Authors
-
 """
 Unit tests for Hive2 list-tables pagination (Java PageUtil parity).
 
