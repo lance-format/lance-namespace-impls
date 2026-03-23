@@ -190,9 +190,42 @@ class TestHive2Namespace:
         request = ListTablesRequest(id=["test_db"])
         response = hive_namespace.list_tables(request)
 
-        # Should only return Lance table names
+        # Should only return Lance table names (sorted, single page)
         assert response.tables == ["table1", "table3"]
+        assert response.page_token is None
         mock_client_instance.get_all_tables.assert_called_once_with("test_db")
+
+    def test_list_tables_with_pagination(self, hive_namespace, mock_hive_client):
+        """``list_tables`` uses the same token/limit rules as Java ``PageUtil``."""
+        names = [f"t{i:02d}" for i in range(5)]
+        mock_tables = []
+        for _ in names:
+            mt = MagicMock()
+            mt.parameters = {"table_type": "lance"}
+            mock_tables.append(mt)
+
+        mock_client_instance = MagicMock()
+        mock_client_instance.get_all_tables.return_value = names
+        mock_client_instance.get_table.side_effect = mock_tables
+        mock_hive_client.__enter__.return_value = mock_client_instance
+
+        r1 = hive_namespace.list_tables(
+            ListTablesRequest(id=["db"], limit=2, page_token=None)
+        )
+        assert r1.tables == ["t00", "t01"]
+        assert r1.page_token == "2"
+
+        r2 = hive_namespace.list_tables(
+            ListTablesRequest(id=["db"], limit=2, page_token="2")
+        )
+        assert r2.tables == ["t02", "t03"]
+        assert r2.page_token == "4"
+
+        r3 = hive_namespace.list_tables(
+            ListTablesRequest(id=["db"], limit=2, page_token="4")
+        )
+        assert r3.tables == ["t04"]
+        assert r3.page_token is None
 
     def test_describe_table(self, hive_namespace, mock_hive_client):
         """Test describing a table returns location only.
@@ -272,6 +305,7 @@ class TestHive2Namespace:
         request = ListTablesRequest(id=[])
         response = hive_namespace.list_tables(request)
         assert response.tables == []
+        assert response.page_token is None
 
         # Test create_namespace for root (should fail)
         request = CreateNamespaceRequest(id=[])
