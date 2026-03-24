@@ -14,6 +14,22 @@ The **client.pool-size** property is optional and specifies the size of the HMS 
 
 The **root** property is optional and specifies the storage root location of the lakehouse on Hive catalog. Default value is the current working directory.
 
+The **hive.metastore.sasl.enabled** property is optional. When set to `true`, the Python Hive3 implementation uses Kerberos SASL to connect to Hive Metastore instead of a plain Thrift transport.
+
+The **hive.metastore.kerberos.principal** property is optional and may be used to derive the Kerberos service name from the metastore service principal, such as `hive-metastore/_HOST@EXAMPLE.COM`.
+
+The **kerberos.service-name** property is optional and overrides the Kerberos service name used for SASL negotiation.
+
+The **kerberos.client-principal** property is optional and specifies the Kerberos client principal to use during SASL negotiation. If omitted, the default local Kerberos credentials are used.
+
+## Authentication
+
+For Kerberos-secured Hive Metastore deployments with `hive.metastore.sasl.enabled=true`, clients must have valid Kerberos credentials available before opening the namespace connection.
+
+For the Python implementation, enabling `hive.metastore.sasl.enabled=true` switches the metastore wrapper to a Kerberos SASL transport.
+
+For the Java implementation, Kerberos-related Hive Metastore settings are typically provided through the Hadoop `Configuration` used to initialize the namespace.
+
 ## Object Mapping
 
 ### Namespace

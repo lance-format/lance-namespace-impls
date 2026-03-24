@@ -2,10 +2,19 @@
 Tests for Lance Hive3 Namespace implementation.
 """
 
+import builtins
+import importlib.util
+from pathlib import Path
+import struct
 import pytest
 from unittest.mock import MagicMock, patch
 
-from lance_namespace_impls.hive3 import Hive3Namespace
+from lance_namespace_impls.hive3 import (
+    Hive3MetastoreClientWrapper,
+    Hive3Namespace,
+    _KerberosSaslTransport,
+    _get_kerberos_service_name,
+)
 from lance_namespace_urllib3_client.models import (
     ListNamespacesRequest,
     DescribeNamespaceRequest,
@@ -38,6 +47,72 @@ def hive_namespace(mock_hive_client):
         return namespace
 
 
+class FakeTransport:
+    """Minimal in-memory transport for SASL transport tests."""
+
+    def __init__(self, reads: bytes = b""):
+        self._reads = bytearray(reads)
+        self.writes = []
+        self.opened = False
+        self.flush_count = 0
+        self.closed = False
+
+    def isOpen(self):
+        return self.opened
+
+    def open(self):
+        self.opened = True
+
+    def close(self):
+        self.closed = True
+        self.opened = False
+
+    def write(self, data):
+        self.writes.append(data)
+
+    def flush(self):
+        self.flush_count += 1
+
+    def readAll(self, size):
+        if len(self._reads) < size:
+            raise EOFError("not enough bytes")
+        data = bytes(self._reads[:size])
+        del self._reads[:size]
+        return data
+
+
+class FakeSaslClient:
+    """Small controllable SASL client test double."""
+
+    mechanism = "GSSAPI"
+
+    def __init__(self, *, qop="auth", process_responses=None):
+        self.qop = qop
+        self._process_responses = list(process_responses or [])
+        self.process_calls = []
+        self.wrap_calls = []
+        self.unwrap_calls = []
+        self.disposed = False
+
+    def process(self, payload=None):
+        self.process_calls.append(payload)
+        if self._process_responses:
+            return self._process_responses.pop(0)
+        return b""
+
+    def wrap(self, payload):
+        self.wrap_calls.append(payload)
+        return b"wrapped:" + payload
+
+    def unwrap(self, payload):
+        self.unwrap_calls.append(payload)
+        assert payload.startswith(b"wrapped:")
+        return payload[len(b"wrapped:") :]
+
+    def dispose(self):
+        self.disposed = True
+
+
 class TestHive3Namespace:
     """Test cases for Hive3Namespace."""
 
@@ -61,14 +136,125 @@ class TestHive3Namespace:
 
                 _ = namespace.client
                 mock_client.assert_called_once_with(
-                    "thrift://localhost:9083", "user:group1,group2"
+                    "thrift://localhost:9083",
+                    "user:group1,group2",
+                    sasl_enabled=False,
+                    kerberos_service_name="hive",
+                    kerberos_client_principal=None,
                 )
+
+    def test_initialization_with_kerberos_sasl(self):
+        """Test namespace initialization with Kerberos SASL enabled."""
+        with patch("lance_namespace_impls.hive3.HIVE_AVAILABLE", True):
+            with patch(
+                "lance_namespace_impls.hive3.Hive3MetastoreClientWrapper"
+            ) as mock_client:
+                namespace = Hive3Namespace(
+                    uri="thrift://metastore.example.com:9083",
+                    root="/tmp/warehouse",
+                    **{
+                        "hive.metastore.sasl.enabled": "true",
+                        "hive.metastore.kerberos.principal": (
+                            "hive-metastore/_HOST@EXAMPLE.COM"
+                        ),
+                        "kerberos.client-principal": "alice@EXAMPLE.COM",
+                    },
+                )
+
+                assert namespace.sasl_enabled is True
+                assert (
+                    namespace.metastore_kerberos_principal
+                    == "hive-metastore/_HOST@EXAMPLE.COM"
+                )
+                assert namespace.kerberos_service_name == "hive-metastore"
+                assert namespace.kerberos_client_principal == "alice@EXAMPLE.COM"
+
+                _ = namespace.client
+                mock_client.assert_called_once_with(
+                    "thrift://metastore.example.com:9083",
+                    None,
+                    sasl_enabled=True,
+                    kerberos_service_name="hive-metastore",
+                    kerberos_client_principal="alice@EXAMPLE.COM",
+                )
+
+    def test_describe_root_namespace_preserves_kerberos_properties(self):
+        """Test root namespace description returns the configured Kerberos settings."""
+        with patch("lance_namespace_impls.hive3.HIVE_AVAILABLE", True):
+            namespace = Hive3Namespace(
+                uri="thrift://metastore.example.com:9083",
+                root="/tmp/warehouse",
+                **{
+                    "hive.metastore.sasl.enabled": "true",
+                    "hive.metastore.kerberos.principal": (
+                        "hive-metastore/_HOST@EXAMPLE.COM"
+                    ),
+                    "kerberos.client-principal": "alice@EXAMPLE.COM",
+                },
+            )
+
+        response = namespace.describe_namespace(DescribeNamespaceRequest(id=[]))
+        assert response.properties["hive.metastore.sasl.enabled"] == "true"
+        assert (
+            response.properties["hive.metastore.kerberos.principal"]
+            == "hive-metastore/_HOST@EXAMPLE.COM"
+        )
+        assert response.properties["kerberos.service-name"] == "hive-metastore"
+        assert (
+            response.properties["kerberos.client-principal"]
+            == "alice@EXAMPLE.COM"
+        )
+
+    def test_explicit_kerberos_service_name_override(self):
+        """Test that an explicit service name wins over principal-derived values."""
+        properties = {
+            "kerberos.service-name": "custom-service",
+            "hive.metastore.kerberos.principal": "hive-metastore/_HOST@EXAMPLE.COM",
+        }
+
+        assert _get_kerberos_service_name(properties) == "custom-service"
 
     def test_initialization_without_hive_deps(self):
         """Test that initialization fails gracefully without Hive dependencies."""
         with patch("lance_namespace_impls.hive3.HIVE_AVAILABLE", False):
             with pytest.raises(ImportError, match="Hive dependencies not installed"):
                 Hive3Namespace(uri="thrift://localhost:9083")
+
+    def test_module_imports_without_hive_dependencies(self):
+        """Test that the module still imports when Hive dependencies are missing."""
+        module_path = (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "lance_namespace_impls"
+            / "hive3.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "isolated_hive3_without_hive_deps", module_path
+        )
+        module = importlib.util.module_from_spec(spec)
+        real_import = builtins.__import__
+
+        blocked_imports = (
+            "hive_metastore_client",
+            "thrift.protocol",
+            "thrift.transport",
+            "thrift.transport.TTransport",
+            "thrift_files.libraries.thrift_hive_metastore_client.ThriftHiveMetastore",
+            "thrift_files.libraries.thrift_hive_metastore_client.ttypes",
+        )
+
+        def import_without_hive(name, globals=None, locals=None, fromlist=(), level=0):
+            if name in blocked_imports:
+                raise ImportError(f"blocked import: {name}")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=import_without_hive):
+            assert spec.loader is not None
+            spec.loader.exec_module(module)
+
+        assert module.HIVE_AVAILABLE is False
+        assert issubclass(module._KerberosSaslTransport, module.TTransportBase)
+        assert issubclass(module._KerberosSaslTransport, module.CReadableTransport)
 
     def test_list_namespaces_root(self, hive_namespace, mock_hive_client):
         """Test listing catalogs at root level."""
@@ -322,5 +508,184 @@ class TestHive3Namespace:
                     client = restored.client
                     assert client is not None
                     mock_client.assert_called_once_with(
-                        "thrift://localhost:9083", "user:group1,group2"
+                        "thrift://localhost:9083",
+                        "user:group1,group2",
+                        sasl_enabled=False,
+                        kerberos_service_name="hive",
+                        kerberos_client_principal=None,
                     )
+
+
+class TestHive3MetastoreClientWrapper:
+    """Tests for transport selection in the Hive3 client wrapper."""
+
+    def test_uses_plain_client_when_sasl_disabled(self):
+        """Test that non-SASL connections keep using the plain HMS client."""
+        with patch("lance_namespace_impls.hive3.HIVE_AVAILABLE", True):
+            with patch("lance_namespace_impls.hive3.Client") as mock_client_class:
+                mock_client = MagicMock()
+                mock_client_class.return_value = mock_client
+
+                wrapper = Hive3MetastoreClientWrapper(
+                    "thrift://localhost:9083", "user:group1,group2"
+                )
+
+                with wrapper as client:
+                    assert client is mock_client
+
+                mock_client_class.assert_called_once_with(host="localhost", port=9083)
+                mock_client.open.assert_called_once()
+                mock_client.set_ugi.assert_called_once_with("user", "group1,group2")
+                mock_client.close.assert_called_once()
+
+    def test_uses_kerberos_client_when_sasl_enabled(self):
+        """Test that SASL-enabled connections use the Kerberos transport."""
+        with patch("lance_namespace_impls.hive3.HIVE_AVAILABLE", True):
+            with patch(
+                "lance_namespace_impls.hive3._KerberosHiveMetastoreClient"
+            ) as mock_client_class:
+                mock_client = MagicMock()
+                mock_client_class.return_value = mock_client
+
+                wrapper = Hive3MetastoreClientWrapper(
+                    "thrift://localhost:9083",
+                    sasl_enabled=True,
+                    kerberos_service_name="hive-metastore",
+                    kerberos_client_principal="alice@EXAMPLE.COM",
+                )
+
+                with wrapper as client:
+                    assert client is mock_client
+
+                mock_client_class.assert_called_once_with(
+                    host="localhost",
+                    port=9083,
+                    kerberos_service_name="hive-metastore",
+                    kerberos_client_principal="alice@EXAMPLE.COM",
+                )
+                mock_client.open.assert_called_once()
+                mock_client.close.assert_called_once()
+
+
+class TestKerberosSaslTransport:
+    """Tests for Kerberos SASL transport framing and negotiation."""
+
+    def test_flush_uses_plain_framing_for_auth_qop(self):
+        """Test that auth-only QOP keeps the payload unwrapped but framed."""
+        raw_transport = FakeTransport()
+        transport = _KerberosSaslTransport(
+            raw_transport, host="metastore.example.com", service="hive"
+        )
+        transport._sasl = FakeSaslClient(qop="auth")
+        transport._encoding_enabled = False
+
+        transport.write(b"ping")
+        transport.flush()
+
+        assert raw_transport.writes == [struct.pack(">I", 4) + b"ping"]
+        assert transport._sasl.wrap_calls == []
+
+    def test_flush_frames_wrapped_payload_for_protected_qop(self):
+        """Test that protected QOP writes a length-prefixed wrapped payload."""
+        raw_transport = FakeTransport()
+        transport = _KerberosSaslTransport(
+            raw_transport, host="metastore.example.com", service="hive"
+        )
+        transport._sasl = FakeSaslClient(qop="auth-conf")
+        transport._encoding_enabled = True
+
+        transport.write(b"ping")
+        transport.flush()
+
+        wrapped = b"wrapped:ping"
+        assert raw_transport.writes == [struct.pack(">I", len(wrapped)) + wrapped]
+        assert transport._sasl.wrap_calls == [b"ping"]
+
+    def test_read_frame_unwraps_payload_without_frame_header(self):
+        """Test that unwrap receives only the framed payload bytes."""
+        wrapped = b"wrapped:pong"
+        raw_transport = FakeTransport(struct.pack(">I", len(wrapped)) + wrapped)
+        transport = _KerberosSaslTransport(
+            raw_transport, host="metastore.example.com", service="hive"
+        )
+        transport._sasl = FakeSaslClient(qop="auth-conf")
+        transport._encoding_enabled = True
+
+        transport._read_frame()
+
+        assert transport.read(4) == b"pong"
+        assert transport._sasl.unwrap_calls == [wrapped]
+
+    def test_open_negotiates_and_detects_protected_qop(self):
+        """Test SASL negotiation and QOP detection during open."""
+        server_messages = b"".join(
+            [
+                struct.pack(">BI", 2, len(b"challenge")) + b"challenge",
+                struct.pack(">BI", 5, len(b"final")) + b"final",
+            ]
+        )
+        raw_transport = FakeTransport(server_messages)
+        sasl_client = FakeSaslClient(
+            qop="auth-conf",
+            process_responses=[b"initial", b"response"],
+        )
+        transport = _KerberosSaslTransport(
+            raw_transport, host="metastore.example.com", service="hive"
+        )
+
+        with patch.object(transport, "_create_sasl_client", return_value=sasl_client):
+            transport.open()
+
+        assert raw_transport.opened is True
+        assert transport._encoding_enabled is True
+        assert sasl_client.process_calls == [None, b"challenge"]
+        assert raw_transport.writes == [
+            struct.pack(">BI", 1, len(b"GSSAPI")) + b"GSSAPI",
+            struct.pack(">BI", 2, len(b"initial")) + b"initial",
+            struct.pack(">BI", 2, len(b"response")) + b"response",
+        ]
+
+    def test_open_ignores_complete_payload(self):
+        """Test that COMPLETE ends negotiation without another SASL step."""
+        server_messages = b"".join(
+            [
+                struct.pack(">BI", 2, len(b"challenge")) + b"challenge",
+                struct.pack(">BI", 5, len(b"final")) + b"final",
+            ]
+        )
+        raw_transport = FakeTransport(server_messages)
+        sasl_client = FakeSaslClient(
+            qop="auth",
+            process_responses=[b"initial", b"response"],
+        )
+        transport = _KerberosSaslTransport(
+            raw_transport, host="metastore.example.com", service="hive"
+        )
+
+        with patch.object(transport, "_create_sasl_client", return_value=sasl_client):
+            transport.open()
+
+        assert sasl_client.process_calls == [None, b"challenge"]
+
+    def test_open_passes_empty_ok_payload_as_empty_bytes(self):
+        """Test that an empty OK payload is normalized to empty bytes."""
+        server_messages = b"".join(
+            [
+                struct.pack(">BI", 2, len(b"challenge")) + b"challenge",
+                struct.pack(">BI", 2, 0),
+                struct.pack(">BI", 5, 0),
+            ]
+        )
+        raw_transport = FakeTransport(server_messages)
+        sasl_client = FakeSaslClient(
+            qop="auth",
+            process_responses=[b"initial", b"response", b""],
+        )
+        transport = _KerberosSaslTransport(
+            raw_transport, host="metastore.example.com", service="hive"
+        )
+
+        with patch.object(transport, "_create_sasl_client", return_value=sasl_client):
+            transport.open()
+
+        assert sasl_client.process_calls == [None, b"challenge", b""]

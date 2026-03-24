@@ -29,6 +29,8 @@ hive2 = [
 hive3 = [
     "thrift>=0.13.0",
     "hive-metastore-client>=1.0.0",
+    "pure-sasl>=0.6.2",
+    "kerberos>=1.3.1",
 ]
 iceberg = []
 polaris = []
@@ -38,6 +40,8 @@ all = [
     "botocore>=1.35.0",
     "thrift>=0.13.0",
     "hive-metastore-client>=1.0.0",
+    "pure-sasl>=0.6.2",
+    "kerberos>=1.3.1",
 ]
 dev = [
     "pytest>=7.0.0",

@@ -31,6 +31,8 @@ Configuration Properties:
     client.pool-size (int): Size of the HMS client connection pool (default: 3)
 """
 
+from io import BytesIO
+import struct
 from typing import List, Optional
 from urllib.parse import urlparse
 import os
@@ -38,6 +40,16 @@ import logging
 
 try:
     from hive_metastore_client import HiveMetastoreClient as Client
+    from thrift.protocol import TBinaryProtocol
+    from thrift.transport import TSocket
+    from thrift.transport.TTransport import (
+        CReadableTransport,
+        TTransportBase,
+        TTransportException,
+    )
+    from thrift_files.libraries.thrift_hive_metastore_client.ThriftHiveMetastore import (
+        Client as ThriftClient,
+    )
     from thrift_files.libraries.thrift_hive_metastore_client.ttypes import (
         Database as HiveDatabase,
         Table as HiveTable,
@@ -54,6 +66,33 @@ try:
 except ImportError:
     HIVE_AVAILABLE = False
     Client = None
+    TBinaryProtocol = None
+    TSocket = None
+
+    class CReadableTransport:
+        pass
+
+    class TTransportBase:
+        pass
+
+    class TTransportException(Exception):
+        """Fallback thrift transport exception used when thrift is unavailable."""
+
+        UNKNOWN = 0
+        NOT_OPEN = 1
+        ALREADY_OPEN = 2
+        TIMED_OUT = 3
+        END_OF_FILE = 4
+
+        def __init__(self, type=UNKNOWN, message=None):
+            self.type = type
+            self.message = message
+            super().__init__(message)
+
+    class ThriftClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
     HiveDatabase = None
     HiveTable = None
     StorageDescriptor = None
@@ -63,6 +102,16 @@ except ImportError:
     AlreadyExistsException = None
     InvalidOperationException = None
     MetaException = None
+
+try:
+    from puresasl.client import SASLClient
+    import puresasl.mechanisms as sasl_mechanisms
+
+    SASL_SUPPORT_AVAILABLE = True
+except ImportError:
+    SASLClient = None
+    sasl_mechanisms = None
+    SASL_SUPPORT_AVAILABLE = False
 
 from lance.namespace import LanceNamespace
 from lance_namespace_urllib3_client.models import (
@@ -96,12 +145,268 @@ MANAGED_BY_KEY = "managed_by"
 VERSION_KEY = "version"
 EXTERNAL_TABLE = "EXTERNAL_TABLE"
 DEFAULT_CATALOG = "hive"
+HIVE_METASTORE_SASL_ENABLED_KEY = "hive.metastore.sasl.enabled"
+_SASL_NEGOTIATION_HEADER = struct.Struct(">BI")
+_SASL_FRAME_HEADER = struct.Struct(">I")
+
+
+def _as_bool(value) -> bool:
+    """Parse a configuration value into a boolean."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_kerberos_service_name(properties: dict) -> str:
+    """Resolve the Kerberos service name used for SASL negotiation."""
+    explicit_service_name = properties.get("kerberos.service-name")
+    if explicit_service_name:
+        return explicit_service_name
+
+    metastore_principal = properties.get("hive.metastore.kerberos.principal")
+    if metastore_principal and "/" in metastore_principal:
+        return metastore_principal.split("/", 1)[0]
+
+    return "hive"
+
+
+class _KerberosSaslTransport(TTransportBase, CReadableTransport):
+    """Minimal SASL transport for Kerberos-authenticated HMS connections."""
+
+    START = 1
+    OK = 2
+    BAD = 3
+    ERROR = 4
+    COMPLETE = 5
+
+    def __init__(
+        self,
+        transport,
+        host: str,
+        service: str,
+        principal: Optional[str] = None,
+    ):
+        self._transport = transport
+        self._host = host
+        self._service = service
+        self._principal = principal
+        self._sasl = None
+        self._encoding_enabled = False
+        self._wbuf = BytesIO()
+        self._rbuf = BytesIO(b"")
+
+    def isOpen(self):
+        return self._transport.isOpen()
+
+    def is_open(self):
+        return self.isOpen()
+
+    def _create_sasl_client(self):
+        if not SASL_SUPPORT_AVAILABLE or not getattr(
+            sasl_mechanisms, "have_kerberos", False
+        ):
+            raise ImportError(
+                "Kerberos SASL support requires the 'pure-sasl' and 'kerberos' "
+                "packages. Please install with: "
+                "pip install 'lance-namespace-impls[hive3]'"
+            )
+
+        return SASLClient(
+            self._host,
+            service=self._service,
+            mechanism="GSSAPI",
+            principal=self._principal,
+        )
+
+    def open(self):
+        if not self.isOpen():
+            self._transport.open()
+
+        if self._sasl is not None:
+            raise TTransportException(
+                type=TTransportException.ALREADY_OPEN,
+                message="SASL transport is already open",
+            )
+
+        self._sasl = self._create_sasl_client()
+
+        try:
+            self._send_sasl_message(self.START, self._sasl.mechanism.encode("ascii"))
+            initial_response = self._sasl.process()
+            self._send_sasl_message(self.OK, initial_response or b"")
+
+            while True:
+                status, payload = self._recv_sasl_message()
+                if status in (self.BAD, self.ERROR):
+                    error = payload.decode("utf-8", errors="replace") or str(status)
+                    raise TTransportException(
+                        type=TTransportException.NOT_OPEN,
+                        message=f"SASL negotiation failed: {error}",
+                    )
+
+                if status not in (self.OK, self.COMPLETE):
+                    raise TTransportException(
+                        type=TTransportException.NOT_OPEN,
+                        message=f"Unexpected SASL negotiation status: {status}",
+                    )
+
+                if status == self.COMPLETE:
+                    # Hive Metastore finishes the SASL negotiation here. In
+                    # practice, feeding the COMPLETE payload back into the
+                    # Python GSSAPI client causes an invalid-token failure
+                    # against real Kerberized HMS deployments.
+                    break
+
+                response = self._sasl.process(payload or b"")
+                self._send_sasl_message(self.OK, response or b"")
+            self._encoding_enabled = self._requires_sasl_encoding()
+        except Exception:
+            self.close()
+            raise
+
+    def close(self):
+        try:
+            if self._sasl is not None:
+                try:
+                    self._sasl.dispose()
+                except Exception:
+                    pass
+        finally:
+            self._sasl = None
+            self._encoding_enabled = False
+            self._wbuf = BytesIO()
+            self._rbuf = BytesIO(b"")
+            self._transport.close()
+
+    def read(self, sz):
+        result = self._rbuf.read(sz)
+        if len(result) == sz:
+            return result
+
+        self._read_frame()
+        return result + self._rbuf.read(sz - len(result))
+
+    def write(self, buf):
+        self._wbuf.write(buf)
+
+    def flush(self):
+        payload = self._wbuf.getvalue()
+        self._wbuf = BytesIO()
+
+        if not payload:
+            self._transport.flush()
+            return
+
+        self._transport.write(self._encode_frame(payload))
+        self._transport.flush()
+
+    def _send_sasl_message(self, status: int, body: bytes):
+        payload = body or b""
+        header = _SASL_NEGOTIATION_HEADER.pack(status, len(payload))
+        self._transport.write(header + payload)
+        self._transport.flush()
+
+    def _recv_sasl_message(self):
+        header = self._read_all_from_transport(5)
+        status, length = _SASL_NEGOTIATION_HEADER.unpack(header)
+        payload = self._read_all_from_transport(length) if length else b""
+        return status, payload
+
+    def _encode_frame(self, payload: bytes) -> bytes:
+        encoded = self._sasl.wrap(payload) if self._encoding_enabled else payload
+        return _SASL_FRAME_HEADER.pack(len(encoded)) + encoded
+
+    def _read_frame(self):
+        header = self._read_all_from_transport(4)
+        (length,) = _SASL_FRAME_HEADER.unpack(header)
+        payload = self._read_all_from_transport(length) if length else b""
+        self._rbuf = BytesIO(self._decode_frame(payload))
+
+    def _decode_frame(self, payload: bytes) -> bytes:
+        if self._encoding_enabled:
+            return self._sasl.unwrap(payload)
+        return payload
+
+    def _requires_sasl_encoding(self) -> bool:
+        qop = getattr(self._sasl, "qop", "auth")
+        if isinstance(qop, bytes):
+            qop = qop.decode("ascii", errors="ignore")
+        return str(qop).lower() not in {"", "auth"}
+
+    def _read_all_from_transport(self, size: int) -> bytes:
+        try:
+            return self._transport.readAll(size)
+        except EOFError as exc:
+            raise TTransportException(
+                type=TTransportException.END_OF_FILE,
+                message="End of file reading from transport",
+            ) from exc
+
+    @property
+    def cstringio_buf(self):
+        return self._rbuf
+
+    def cstringio_refill(self, partialread, reqlen):
+        prefix = partialread
+        while len(prefix) < reqlen:
+            self._read_frame()
+            prefix += self._rbuf.getvalue()
+        self._rbuf = BytesIO(prefix)
+        return self._rbuf
+
+
+class _KerberosHiveMetastoreClient(ThriftClient):
+    """Thrift HMS client backed by a Kerberos SASL transport."""
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        kerberos_service_name: str,
+        kerberos_client_principal: Optional[str] = None,
+    ) -> None:
+        protocol = self._init_protocol(
+            host, port, kerberos_service_name, kerberos_client_principal
+        )
+        super().__init__(protocol)
+
+    @staticmethod
+    def _init_protocol(
+        host: str,
+        port: int,
+        kerberos_service_name: str,
+        kerberos_client_principal: Optional[str],
+    ):
+        transport = _KerberosSaslTransport(
+            TSocket.TSocket(host, int(port)),
+            host=host,
+            service=kerberos_service_name,
+            principal=kerberos_client_principal,
+        )
+        return TBinaryProtocol.TBinaryProtocol(transport)
+
+    def open(self) -> "_KerberosHiveMetastoreClient":
+        self._oprot.trans.open()
+        return self
+
+    def close(self) -> None:
+        self._oprot.trans.close()
 
 
 class Hive3MetastoreClientWrapper:
     """Helper class to manage Hive 3.x Metastore client connections."""
 
-    def __init__(self, uri: str, ugi: Optional[str] = None):
+    def __init__(
+        self,
+        uri: str,
+        ugi: Optional[str] = None,
+        *,
+        sasl_enabled: bool = False,
+        kerberos_service_name: str = "hive",
+        kerberos_client_principal: Optional[str] = None,
+    ):
         if not HIVE_AVAILABLE:
             raise ImportError(
                 "Hive dependencies not installed. Please install with: "
@@ -110,6 +415,9 @@ class Hive3MetastoreClientWrapper:
 
         self._uri = uri
         self._ugi = ugi.split(":") if ugi else None
+        self._sasl_enabled = sasl_enabled
+        self._kerberos_service_name = kerberos_service_name
+        self._kerberos_client_principal = kerberos_client_principal
         url_parts = urlparse(self._uri)
         self._host = url_parts.hostname or "localhost"
         self._port = url_parts.port or 9083
@@ -117,7 +425,15 @@ class Hive3MetastoreClientWrapper:
 
     def __enter__(self):
         """Enter context manager."""
-        self._client = Client(host=self._host, port=self._port)
+        if self._sasl_enabled:
+            self._client = _KerberosHiveMetastoreClient(
+                host=self._host,
+                port=self._port,
+                kerberos_service_name=self._kerberos_service_name,
+                kerberos_client_principal=self._kerberos_client_principal,
+            )
+        else:
+            self._client = Client(host=self._host, port=self._port)
         self._client.open()
         if self._ugi:
             self._client.set_ugi(*self._ugi)
@@ -162,6 +478,12 @@ class Hive3Namespace(LanceNamespace):
         self.ugi = properties.get("ugi")
         self.root = properties.get("root", os.getcwd())
         self.pool_size = int(properties.get("client.pool-size", "3"))
+        self.sasl_enabled = _as_bool(properties.get(HIVE_METASTORE_SASL_ENABLED_KEY))
+        self.metastore_kerberos_principal = properties.get(
+            "hive.metastore.kerberos.principal"
+        )
+        self.kerberos_service_name = _get_kerberos_service_name(properties)
+        self.kerberos_client_principal = properties.get("kerberos.client-principal")
 
         self._properties = properties.copy()
         self._client = None
@@ -174,7 +496,13 @@ class Hive3Namespace(LanceNamespace):
     def client(self):
         """Get the Hive client, initializing it if necessary."""
         if self._client is None:
-            self._client = Hive3MetastoreClientWrapper(self.uri, self.ugi)
+            self._client = Hive3MetastoreClientWrapper(
+                self.uri,
+                self.ugi,
+                sasl_enabled=self.sasl_enabled,
+                kerberos_service_name=self.kerberos_service_name,
+                kerberos_client_principal=self.kerberos_client_principal,
+            )
         return self._client
 
     def _normalize_identifier(self, identifier: List[str]) -> tuple:
@@ -257,6 +585,17 @@ class Hive3Namespace(LanceNamespace):
                 }
                 if self.ugi:
                     properties["ugi"] = self.ugi
+                if self.sasl_enabled:
+                    properties[HIVE_METASTORE_SASL_ENABLED_KEY] = "true"
+                    if self.metastore_kerberos_principal:
+                        properties["hive.metastore.kerberos.principal"] = (
+                            self.metastore_kerberos_principal
+                        )
+                    properties["kerberos.service-name"] = self.kerberos_service_name
+                if self.kerberos_client_principal:
+                    properties["kerberos.client-principal"] = (
+                        self.kerberos_client_principal
+                    )
                 return DescribeNamespaceResponse(properties=properties)
 
             if len(request.id) == 1:
