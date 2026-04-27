@@ -269,12 +269,23 @@ class TestGlueNamespace:
 
     def test_deregister_table(self, glue_namespace):
         """Test deregistering a table (only removes from Glue, keeps Lance dataset)."""
+        glue_namespace.glue.get_table.return_value = {
+            "Table": {
+                "Name": "test_table",
+                "Parameters": {"table_type": "LANCE"},
+                "StorageDescriptor": {"Location": "s3://bucket/table.lance"},
+            }
+        }
+
         request = DeregisterTableRequest(id=["test_db", "test_table"])
-        glue_namespace.deregister_table(request)
+        response = glue_namespace.deregister_table(request)
 
         glue_namespace.glue.delete_table.assert_called_once_with(
             DatabaseName="test_db", Name="test_table"
         )
+        assert response.id == ["test_db", "test_table"]
+        assert response.location == "s3://bucket/table.lance"
+        assert response.properties == {"table_type": "LANCE"}
 
     def test_describe_table(self, glue_namespace):
         """Test describing a table."""

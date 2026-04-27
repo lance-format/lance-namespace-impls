@@ -54,6 +54,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -317,6 +318,14 @@ public class TestPolarisNamespace {
 
     assertThat(response.getTables()).hasSize(2);
     assertThat(response.getTables()).contains("table1", "table2");
+    verify(restClient, never())
+        .get(
+            eq("/polaris/v1/test_catalog/namespaces/schema1/generic-tables/table1"),
+            eq(PolarisModels.LoadGenericTableResponse.class));
+    verify(restClient, never())
+        .get(
+            eq("/polaris/v1/test_catalog/namespaces/schema1/generic-tables/table2"),
+            eq(PolarisModels.LoadGenericTableResponse.class));
   }
 
   @Test

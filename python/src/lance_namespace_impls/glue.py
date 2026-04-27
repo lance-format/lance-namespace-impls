@@ -14,7 +14,7 @@ except ImportError:
     Config = None
     HAS_BOTO3 = False
 
-from lance.namespace import LanceNamespace
+from lance_namespace import LanceNamespace
 from lance_namespace_urllib3_client.models import (
     ListNamespacesRequest,
     ListNamespacesResponse,
@@ -35,6 +35,12 @@ from lance_namespace_urllib3_client.models import (
 )
 
 from lance_namespace_impls.rest_client import InvalidInputException
+from lance_namespace_impls.table_utils import (
+    has_storage_components,
+    include_declared,
+    is_only_declared,
+    merge_table_properties,
+)
 
 LANCE_TABLE_TYPE = "LANCE"
 TABLE_TYPE = "table_type"
@@ -328,8 +334,9 @@ class GlueNamespace(LanceNamespace):
                     response = self.glue.get_tables(DatabaseName=database_name)
 
                 for table in response.get("TableList", []):
-                    # Only include Lance tables
-                    if self._is_lance_table(table):
+                    if self._should_include_lance_table(
+                        table, request.include_declared
+                    ):
                         tables.append(table["Name"])
 
                 next_token = response.get("NextToken")
@@ -367,8 +374,15 @@ class GlueNamespace(LanceNamespace):
                     f"Table has no location: {database_name}.{table_name}"
                 )
 
+            properties = table.get("Parameters", {})
             return DescribeTableResponse(
-                location=location, storage_options=self.config.storage_options
+                location=location,
+                storage_options=self.config.storage_options,
+                properties=properties,
+                managed_versioning=False,
+                is_only_declared=is_only_declared(location, self.config.storage_options)
+                if request.check_declared
+                else None,
             )
         except Exception as e:
             error_name = e.__class__.__name__ if hasattr(e, "__class__") else ""
@@ -407,14 +421,20 @@ class GlueNamespace(LanceNamespace):
             }
         ]
 
+        properties = merge_table_properties(
+            request.properties,
+            {
+                TABLE_TYPE: LANCE_TABLE_TYPE,
+                "managed_by": "storage",
+                "empty_table": "true",
+            },
+        )
+
         # Create Glue table entry without creating actual Lance dataset
         table_input = {
             "Name": table_name,
             "TableType": EXTERNAL_TABLE,
-            "Parameters": {
-                TABLE_TYPE: LANCE_TABLE_TYPE,
-                "empty_table": "true",  # Mark as empty table
-            },
+            "Parameters": properties,
             "StorageDescriptor": {
                 "Location": table_location,
                 "Columns": glue_columns,
@@ -435,7 +455,12 @@ class GlueNamespace(LanceNamespace):
                 )
             raise RuntimeError(f"Failed to declare table: {e}")
 
-        return DeclareTableResponse(location=table_location)
+        return DeclareTableResponse(
+            location=table_location,
+            storage_options=self.config.storage_options,
+            properties=properties,
+            managed_versioning=False,
+        )
 
     def deregister_table(
         self, request: DeregisterTableRequest
@@ -444,9 +469,22 @@ class GlueNamespace(LanceNamespace):
         database_name, table_name = self._parse_table_identifier(request.id)
 
         try:
+            table = self.glue.get_table(DatabaseName=database_name, Name=table_name)[
+                "Table"
+            ]
+            if not self._is_lance_table(table):
+                raise RuntimeError(
+                    f"Table is not a Lance table: {database_name}.{table_name}"
+                )
+
             # Only remove from Glue catalog, don't delete the Lance dataset
             self.glue.delete_table(DatabaseName=database_name, Name=table_name)
-            return DeregisterTableResponse()
+            location = table.get("StorageDescriptor", {}).get("Location")
+            return DeregisterTableResponse(
+                id=request.id,
+                location=location,
+                properties=table.get("Parameters", {}),
+            )
         except Exception as e:
             error_name = e.__class__.__name__ if hasattr(e, "__class__") else ""
             if error_name == "EntityNotFoundException":
@@ -469,6 +507,17 @@ class GlueNamespace(LanceNamespace):
             glue_table.get("Parameters", {}).get(TABLE_TYPE, "").upper()
             == LANCE_TABLE_TYPE
         )
+
+    def _should_include_lance_table(
+        self, glue_table: Dict[str, Any], include_declared_value: Optional[bool]
+    ) -> bool:
+        """Check if a Glue table is Lance and matches include_declared."""
+        if not self._is_lance_table(glue_table):
+            return False
+        if include_declared(include_declared_value):
+            return True
+        location = glue_table.get("StorageDescriptor", {}).get("Location")
+        return has_storage_components(location, self.config.storage_options)
 
     def __getstate__(self):
         """Prepare instance for pickling by excluding unpickleable objects."""

@@ -123,7 +123,7 @@ public class Hive2Util {
       params.putAll(properties);
     }
     params.put("table_type", "lance");
-    params.putIfAbsent("managed_by", "storage");
+    params.put("managed_by", "storage");
     return params;
   }
 }

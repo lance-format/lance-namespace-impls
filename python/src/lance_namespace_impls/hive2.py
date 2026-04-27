@@ -62,7 +62,7 @@ except ImportError:
     InvalidOperationException = None
     MetaException = None
 
-from lance.namespace import LanceNamespace
+from lance_namespace import LanceNamespace
 from lance_namespace_urllib3_client.models import (
     ListNamespacesRequest,
     ListNamespacesResponse,
@@ -85,6 +85,12 @@ from lance_namespace_urllib3_client.models import (
 )
 
 from lance_namespace_impls.rest_client import InvalidInputException
+from lance_namespace_impls.table_utils import (
+    has_storage_components,
+    include_declared,
+    is_only_declared,
+    merge_table_properties,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -351,8 +357,11 @@ class Hive2Namespace(LanceNamespace):
                                 TABLE_TYPE_KEY, ""
                             ).lower()
                             if table_type == LANCE_TABLE_FORMAT:
-                                # Return just table name, not full identifier
-                                tables.append(table_name)
+                                location = table.sd.location if table.sd else None
+                                if include_declared(
+                                    request.include_declared
+                                ) or has_storage_components(location):
+                                    tables.append(table_name)
                     except Exception:
                         # Skip tables we can't read
                         continue
@@ -367,7 +376,7 @@ class Hive2Namespace(LanceNamespace):
     def describe_table(self, request: DescribeTableRequest) -> DescribeTableResponse:
         """Describe a table in the Hive Metastore.
 
-        Only load_detailed_metadata=false is supported. Returns location only.
+        Only load_detailed_metadata=false is supported.
         """
         if request.load_detailed_metadata:
             raise ValueError(
@@ -392,7 +401,14 @@ class Hive2Namespace(LanceNamespace):
                 if not location:
                     raise ValueError(f"Table {request.id} has no location")
 
-                return DescribeTableResponse(location=location)
+                return DescribeTableResponse(
+                    location=location,
+                    properties=table.parameters or {},
+                    managed_versioning=False,
+                    is_only_declared=is_only_declared(location)
+                    if request.check_declared
+                    else None,
+                )
         except Exception as e:
             if NoSuchObjectException and isinstance(e, NoSuchObjectException):
                 raise ValueError(f"Table {request.id} does not exist")
@@ -417,7 +433,10 @@ class Hive2Namespace(LanceNamespace):
 
                 client.drop_table(database, table_name, deleteData=True)
 
-                return DropTableResponse(location=location)
+                return DropTableResponse(
+                    location=location,
+                    properties=table.parameters or {},
+                )
         except Exception as e:
             if NoSuchObjectException and isinstance(e, NoSuchObjectException):
                 raise ValueError(f"Table {request.id} does not exist")
@@ -444,7 +463,11 @@ class Hive2Namespace(LanceNamespace):
 
                 client.drop_table(database, table_name, deleteData=False)
 
-                return DeregisterTableResponse(location=location)
+                return DeregisterTableResponse(
+                    id=request.id,
+                    location=location,
+                    properties=table.parameters or {},
+                )
         except Exception as e:
             if NoSuchObjectException and isinstance(e, NoSuchObjectException):
                 raise ValueError(f"Table {request.id} does not exist")
@@ -485,11 +508,14 @@ class Hive2Namespace(LanceNamespace):
             )
 
             # Set table parameters to identify it as Lance table
-            parameters = {
-                TABLE_TYPE_KEY: "LANCE",
-                MANAGED_BY_KEY: "storage",
-                "empty_table": "true",  # Mark as empty table
-            }
+            parameters = merge_table_properties(
+                request.properties,
+                {
+                    TABLE_TYPE_KEY: LANCE_TABLE_FORMAT,
+                    MANAGED_BY_KEY: "storage",
+                    "empty_table": "true",
+                },
+            )
 
             hive_table = HiveTable(
                 tableName=table_name,
@@ -503,7 +529,11 @@ class Hive2Namespace(LanceNamespace):
             with self.client as client:
                 client.create_table(hive_table)
 
-            return DeclareTableResponse(location=location)
+            return DeclareTableResponse(
+                location=location,
+                properties=parameters,
+                managed_versioning=False,
+            )
 
         except AlreadyExistsException:
             raise ValueError(f"Table {request.id} already exists")

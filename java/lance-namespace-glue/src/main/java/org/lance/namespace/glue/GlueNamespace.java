@@ -36,6 +36,7 @@ import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
+import org.lance.namespace.util.LanceTableUtil;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
@@ -221,7 +222,10 @@ public class GlueNamespace implements LanceNamespace, Closeable {
         GetTablesResponse response =
             glueClient.getTables(
                 listRequest.maxResults(fetchSize).nextToken(glueNextToken).build());
-        response.tableList().stream().filter(this::isLanceTable).forEach(t -> tables.add(t.name()));
+        response.tableList().stream()
+            .filter(this::isLanceTable)
+            .filter(t -> shouldIncludeTable(t, request.getIncludeDeclared()))
+            .forEach(t -> tables.add(t.name()));
         glueNextToken = response.nextToken();
         remaining = pageSize - tables.size();
       } while (glueNextToken != null && remaining > 0);
@@ -253,6 +257,12 @@ public class GlueNamespace implements LanceNamespace, Closeable {
       response.setLocation(table.storageDescriptor().location());
     }
     response.setStorageOptions(config.getStorageOptions());
+    response.setProperties(table.parameters());
+    response.setManagedVersioning(false);
+    if (Boolean.TRUE.equals(request.getCheckDeclared())) {
+      response.setIsOnlyDeclared(
+          LanceTableUtil.isOnlyDeclared(response.getLocation(), config.getStorageOptions()));
+    }
     return response;
   }
 
@@ -298,9 +308,11 @@ public class GlueNamespace implements LanceNamespace, Closeable {
     }
 
     try {
-      Map<String, String> params = Maps.newHashMap();
-      params.put(TABLE_TYPE_PROP, LANCE_TABLE_TYPE_VALUE);
-      params.put(MANAGED_BY_PROP, STORAGE_VALUE);
+      Map<String, String> params =
+          LanceTableUtil.mergeTableProperties(
+              request.getProperties(),
+              ImmutableMap.of(
+                  TABLE_TYPE_PROP, LANCE_TABLE_TYPE_VALUE, MANAGED_BY_PROP, STORAGE_VALUE));
 
       TableInput tableInput =
           TableInput.builder()
@@ -320,6 +332,8 @@ public class GlueNamespace implements LanceNamespace, Closeable {
       DeclareTableResponse response = new DeclareTableResponse();
       response.setLocation(location);
       response.setStorageOptions(config.getStorageOptions());
+      response.setProperties(params);
+      response.setManagedVersioning(false);
       return response;
     } catch (AlreadyExistsException e) {
       throw GlueToLanceErrorConverter.tableConflict(
@@ -520,6 +534,15 @@ public class GlueNamespace implements LanceNamespace, Closeable {
       return false;
     }
     return LANCE_TABLE_TYPE_VALUE.equalsIgnoreCase(table.parameters().get(TABLE_TYPE_PROP));
+  }
+
+  private boolean shouldIncludeTable(Table table, Boolean includeDeclared) {
+    if (LanceTableUtil.includeDeclared(includeDeclared)) {
+      return true;
+    }
+    String location =
+        table.storageDescriptor() != null ? table.storageDescriptor().location() : null;
+    return LanceTableUtil.hasStorageComponents(location, config.getStorageOptions());
   }
 
   private void ensureLanceTable(Table table) {

@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from lance.namespace import LanceNamespace
+from lance_namespace import LanceNamespace
 from lance_namespace_urllib3_client.models import (
     CreateNamespaceRequest,
     CreateNamespaceResponse,
@@ -35,6 +35,12 @@ from lance_namespace_impls.rest_client import (
     NamespaceNotFoundException,
     TableAlreadyExistsException,
     TableNotFoundException,
+)
+from lance_namespace_impls.table_utils import (
+    has_storage_components,
+    include_declared,
+    is_only_declared,
+    merge_table_properties,
 )
 
 logger = logging.getLogger(__name__)
@@ -264,7 +270,12 @@ class PolarisNamespace(LanceNamespace):
             if response and "identifiers" in response:
                 for table_id in response["identifiers"]:
                     table_name = table_id.get("name")
-                    if table_name:
+                    if table_name and self._should_include_lance_table(
+                        catalog,
+                        namespace_path,
+                        table_name,
+                        request.include_declared,
+                    ):
                         tables.append(table_name)
 
             tables = sorted(set(tables))
@@ -302,7 +313,10 @@ class PolarisNamespace(LanceNamespace):
                     f"{self.config.root}/{'/'.join(table_id[:-1])}/{table_name}"
                 )
 
-            properties = {self.TABLE_TYPE_KEY: self.TABLE_FORMAT_LANCE}
+            properties = merge_table_properties(
+                request.properties,
+                {self.TABLE_TYPE_KEY: self.TABLE_FORMAT_LANCE},
+            )
 
             create_request = {
                 "name": table_name,
@@ -312,14 +326,21 @@ class PolarisNamespace(LanceNamespace):
             }
 
             namespace_path = ".".join(namespace)
-            self.rest_client.post(
+            response = self.rest_client.post(
                 f"/polaris/v1/{catalog}/namespaces/{namespace_path}/generic-tables",
                 create_request,
             )
 
             logger.info(f"Declared table: {'.'.join(table_id)}")
 
-            return DeclareTableResponse(location=table_path)
+            response_properties = (
+                response.get("table", {}).get("properties") if response else None
+            )
+            return DeclareTableResponse(
+                location=table_path,
+                properties=response_properties or properties,
+                managed_versioning=False,
+            )
 
         except RestClientException as e:
             if e.is_conflict():
@@ -343,7 +364,7 @@ class PolarisNamespace(LanceNamespace):
     def describe_table(self, request: DescribeTableRequest) -> DescribeTableResponse:
         """Describe a table.
 
-        Only load_detailed_metadata=false is supported. Returns location and storage_options only.
+        Only load_detailed_metadata=false is supported.
         """
         if request.load_detailed_metadata:
             raise InvalidInputException(
@@ -381,7 +402,11 @@ class PolarisNamespace(LanceNamespace):
 
             return DescribeTableResponse(
                 location=table.get("base-location"),
-                storage_options=table.get("properties", {}),
+                properties=table.get("properties", {}),
+                managed_versioning=False,
+                is_only_declared=is_only_declared(table.get("base-location"))
+                if request.check_declared
+                else None,
             )
 
         except RestClientException as e:
@@ -415,9 +440,17 @@ class PolarisNamespace(LanceNamespace):
                 f"/polaris/v1/{catalog}/namespaces/{namespace_path}/generic-tables/{table_name}"
             )
 
-            table_location = None
-            if response and "table" in response:
-                table_location = response["table"].get("base-location")
+            table = response.get("table") if response else None
+            if not table:
+                raise TableNotFoundException(f"Table not found: {'.'.join(request.id)}")
+            table_format = table.get("format", "")
+            if table_format.lower() != self.TABLE_FORMAT_LANCE:
+                raise InvalidInputException(
+                    f"Table {'.'.join(request.id)} is not a Lance table (format: {table_format})"
+                )
+
+            table_location = table.get("base-location")
+            properties = table.get("properties")
 
             self.rest_client.delete(
                 f"/polaris/v1/{catalog}/namespaces/{namespace_path}/generic-tables/{table_name}"
@@ -425,7 +458,11 @@ class PolarisNamespace(LanceNamespace):
 
             logger.info(f"Deregistered table: {'.'.join(table_id)}")
 
-            return DeregisterTableResponse(location=table_location)
+            return DeregisterTableResponse(
+                id=request.id,
+                location=table_location,
+                properties=properties,
+            )
 
         except RestClientException as e:
             if e.is_not_found():
@@ -444,3 +481,28 @@ class PolarisNamespace(LanceNamespace):
     def _parse_identifier(self, identifier: List[str]) -> List[str]:
         """Parse identifier list."""
         return identifier if identifier else []
+
+    def _should_include_lance_table(
+        self,
+        catalog: str,
+        namespace_path: str,
+        table_name: str,
+        include_declared_value: Optional[bool],
+    ) -> bool:
+        """Check if a Polaris generic table is Lance and matches include_declared."""
+        if include_declared(include_declared_value):
+            return True
+
+        try:
+            response = self.rest_client.get(
+                f"/polaris/v1/{catalog}/namespaces/{namespace_path}/generic-tables/{table_name}"
+            )
+            if not response or "table" not in response:
+                return False
+            table = response["table"]
+            if table.get("format", "").lower() != self.TABLE_FORMAT_LANCE:
+                return False
+            return has_storage_components(table.get("base-location"))
+        except Exception as e:
+            logger.debug(f"Failed to check if table is Lance table: {e}")
+            return False

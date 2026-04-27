@@ -23,6 +23,12 @@
 
     <dependencies>
       <dependency>
+        <groupId>org.lance</groupId>
+        <artifactId>lance-namespace-impls-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <dependency>
         <groupId>software.amazon.awssdk</groupId>
         <artifactId>glue</artifactId>
         <version>${aws.sdk.version}</version>

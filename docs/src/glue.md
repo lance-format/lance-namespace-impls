@@ -78,7 +78,7 @@ The **table location** is stored in the [`StorageDescriptor.Location`](https://d
 
 ## Lance Table Identification
 
-A table in AWS Glue is identified as a Lance table when it meets the following criteria: the `TableType` is `EXTERNAL_TABLE`, and the `Parameters` map contains a key `table_type` with value `lance` (case insensitive). The `StorageDescriptor.Location` must point to a valid Lance table root directory.
+A table in AWS Glue is identified as a Lance table when it meets the following criteria: the `TableType` is `EXTERNAL_TABLE`, and the `Parameters` map contains a key `table_type` with value `lance` (case insensitive). The `StorageDescriptor.Location` may be declared before a Lance dataset exists; storage is checked only for `include_declared=false` listing or `check_declared=true` describe requests.
 
 ## Basic Operations
 
@@ -191,9 +191,10 @@ The implementation:
     - `DatabaseName`: the database name
     - `TableInput.Name`: the table name
     - `TableInput.TableType`: `EXTERNAL_TABLE`
-    - `TableInput.Parameters`: include `table_type=lance` and other properties
+    - `TableInput.Parameters`: request `properties` merged with implementation markers such as `table_type=lance`
     - `TableInput.StorageDescriptor.Location`: the specified table location
 4. POST the CreateTable request to Glue
+5. Return the declared table location, catalog table properties, optional storage options, and `managed_versioning=false`
 
 **Error Handling:**
 
@@ -215,7 +216,8 @@ The implementation:
 2. Verify the namespace exists using [GetDatabase](https://docs.aws.amazon.com/glue/latest/webapi/API_GetDatabase.html)
 3. Use [GetTables](https://docs.aws.amazon.com/glue/latest/webapi/API_GetTables.html) with `CatalogId` and `DatabaseName`
 4. Filter tables where `Parameters.table_type=lance` (case insensitive)
-5. Sort the results and apply pagination using `NextToken`
+5. If `include_declared=false`, only include catalog entries whose `StorageDescriptor.Location` can be opened as a Lance dataset
+6. Sort the results and apply pagination using `NextToken`
 
 **Error Handling:**
 
@@ -227,14 +229,15 @@ If the Glue service is unavailable, return error code `17` (ServiceUnavailable).
 
 ### DescribeTable
 
-Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. When `load_detailed_metadata=false`, only the table location and storage_options are returned; other fields (version, table_uri, schema, stats) are null.
+Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. The response includes the table location, catalog table properties, `managed_versioning=false`, and any implementation storage options that should be returned to the caller.
 
 The implementation:
 
 1. Parse the table identifier to extract catalog, database, and table name
 2. Use [GetTable](https://docs.aws.amazon.com/glue/latest/webapi/API_GetTable.html) with `CatalogId`, `DatabaseName`, and `Name`
 3. Validate that the table is a Lance table (check `Parameters.table_type=lance`)
-4. Return the table location from `StorageDescriptor.Location` and storage_options from `Parameters`
+4. Return the table location from `StorageDescriptor.Location` and catalog properties from `Parameters`
+5. If `check_declared=true`, set `is_only_declared=true` when the location cannot be opened as a Lance dataset
 
 **Error Handling:**
 
@@ -255,7 +258,8 @@ The implementation:
 1. Parse the table identifier to extract catalog, database, and table name
 2. Use [GetTable](https://docs.aws.amazon.com/glue/latest/webapi/API_GetTable.html) to retrieve and validate the table is a Lance table
 3. Use [DeleteTable](https://docs.aws.amazon.com/glue/latest/webapi/API_DeleteTable.html) with `CatalogId`, `DatabaseName`, and `Name`
-4. The underlying Lance table data at `StorageDescriptor.Location` is not deleted
+4. Return the table id, location, and catalog properties
+5. The underlying Lance table data at `StorageDescriptor.Location` is not deleted
 
 **Error Handling:**
 

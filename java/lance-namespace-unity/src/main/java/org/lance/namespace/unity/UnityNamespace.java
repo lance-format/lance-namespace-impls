@@ -40,6 +40,7 @@ import org.lance.namespace.model.NamespaceExistsRequest;
 import org.lance.namespace.model.TableExistsRequest;
 import org.lance.namespace.rest.RestClient;
 import org.lance.namespace.rest.RestClientException;
+import org.lance.namespace.util.LanceTableUtil;
 import org.lance.namespace.util.ObjectIdentifier;
 import org.lance.namespace.util.ValidationUtil;
 
@@ -55,7 +56,6 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -288,7 +288,7 @@ public class UnityNamespace implements LanceNamespace, Closeable {
       if (unityResponse != null && unityResponse.getTables() != null) {
         tables =
             unityResponse.getTables().stream()
-                .filter(this::isLanceTable)
+                .filter(t -> shouldIncludeTable(t, request.getIncludeDeclared()))
                 .map(UnityModels.TableInfo::getName)
                 .collect(Collectors.toList());
       }
@@ -345,8 +345,9 @@ public class UnityNamespace implements LanceNamespace, Closeable {
       createTable.setColumns(columns);
       createTable.setStorageLocation(tablePath);
 
-      Map<String, String> properties = new HashMap<>();
-      properties.put(TABLE_TYPE_KEY, TABLE_TYPE_LANCE);
+      Map<String, String> properties =
+          LanceTableUtil.mergeTableProperties(
+              request.getProperties(), Collections.singletonMap(TABLE_TYPE_KEY, TABLE_TYPE_LANCE));
       createTable.setProperties(properties);
 
       UnityModels.TableInfo tableInfo =
@@ -354,6 +355,11 @@ public class UnityNamespace implements LanceNamespace, Closeable {
 
       DeclareTableResponse response = new DeclareTableResponse();
       response.setLocation(tablePath);
+      response.setProperties(
+          tableInfo != null && tableInfo.getProperties() != null
+              ? tableInfo.getProperties()
+              : properties);
+      response.setManagedVersioning(false);
       return response;
 
     } catch (RestClientException e) {
@@ -396,7 +402,12 @@ public class UnityNamespace implements LanceNamespace, Closeable {
 
       DescribeTableResponse response = new DescribeTableResponse();
       response.setLocation(tableInfo.getStorageLocation());
-      response.setStorageOptions(tableInfo.getProperties());
+      response.setProperties(tableInfo.getProperties());
+      response.setManagedVersioning(false);
+      if (Boolean.TRUE.equals(request.getCheckDeclared())) {
+        response.setIsOnlyDeclared(
+            LanceTableUtil.isOnlyDeclared(tableInfo.getStorageLocation(), Collections.emptyMap()));
+      }
       return response;
 
     } catch (RestClientException e) {
@@ -440,7 +451,9 @@ public class UnityNamespace implements LanceNamespace, Closeable {
       restClient.delete("/tables/" + fullName);
 
       DeregisterTableResponse response = new DeregisterTableResponse();
+      response.setId(request.getId());
       response.setLocation(location);
+      response.setProperties(tableInfo.getProperties());
       return response;
 
     } catch (RestClientException e) {
@@ -464,6 +477,13 @@ public class UnityNamespace implements LanceNamespace, Closeable {
     }
     String tableType = tableInfo.getProperties().get(TABLE_TYPE_KEY);
     return TABLE_TYPE_LANCE.equalsIgnoreCase(tableType);
+  }
+
+  private boolean shouldIncludeTable(UnityModels.TableInfo tableInfo, Boolean includeDeclared) {
+    return isLanceTable(tableInfo)
+        && (LanceTableUtil.includeDeclared(includeDeclared)
+            || LanceTableUtil.hasStorageComponents(
+                tableInfo.getStorageLocation(), Collections.emptyMap()));
   }
 
   private List<UnityModels.ColumnInfo> convertArrowSchemaToUnityColumns(Schema arrowSchema) {

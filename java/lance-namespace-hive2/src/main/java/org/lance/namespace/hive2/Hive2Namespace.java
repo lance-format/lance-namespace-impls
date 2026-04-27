@@ -42,6 +42,7 @@ import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
 import org.lance.namespace.model.NamespaceExistsRequest;
 import org.lance.namespace.model.TableExistsRequest;
+import org.lance.namespace.util.LanceTableUtil;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -231,7 +232,7 @@ public class Hive2Namespace implements LanceNamespace {
         !nsId.isRoot() && nsId.levels() == 1, "Expect a 1-level namespace but get %s", nsId);
 
     String db = nsId.levelAtListPos(0).toLowerCase();
-    List<String> tables = doListTables(db);
+    List<String> tables = doListTables(db, request.getIncludeDeclared());
 
     Collections.sort(tables);
     PageUtil.Page page =
@@ -278,17 +279,33 @@ public class Hive2Namespace implements LanceNamespace {
     ValidationUtil.checkArgument(
         tableId.levels() == 2, "Expect 2-level table identifier but get %s", tableId);
 
-    Optional<String> location = doDescribeTable(tableId);
+    String db = tableId.levelAtListPos(0).toLowerCase();
+    String table = tableId.levelAtListPos(1).toLowerCase();
+    Optional<Table> hmsTable = Hive2Util.getTable(clientPool, db, table);
 
-    if (!location.isPresent()) {
+    if (!hmsTable.isPresent()) {
       throw new TableNotFoundException(
           String.format("Table does not exist: %s", tableId.stringStyleId()),
           TableNotFound.getType(),
           tableId.stringStyleId());
     }
 
+    Hive2Util.validateLanceTable(hmsTable.get());
+    String location = hmsTable.get().getSd() != null ? hmsTable.get().getSd().getLocation() : null;
+    if (location == null || location.isEmpty()) {
+      throw new TableNotFoundException(
+          String.format("Table does not have a location: %s", tableId.stringStyleId()),
+          TableNotFound.getType(),
+          tableId.stringStyleId());
+    }
+
     DescribeTableResponse response = new DescribeTableResponse();
-    response.setLocation(location.get());
+    response.setLocation(location);
+    response.setProperties(hmsTable.get().getParameters());
+    response.setManagedVersioning(false);
+    if (Boolean.TRUE.equals(request.getCheckDeclared())) {
+      response.setIsOnlyDeclared(LanceTableUtil.isOnlyDeclared(location, Collections.emptyMap()));
+    }
     return response;
   }
 
@@ -306,11 +323,15 @@ public class Hive2Namespace implements LanceNamespace {
       location = getDefaultTableLocation(tableId.levelAtListPos(0), tableId.levelAtListPos(1));
     }
 
+    Map<String, String> properties = Hive2Util.createLanceTableParams(request.getProperties());
+
     // Create table in metastore without data (pass null for requestData)
-    doCreateTable(tableId, null, location, null, null);
+    doCreateTable(tableId, null, location, properties, null);
 
     DeclareTableResponse response = new DeclareTableResponse();
     response.setLocation(location);
+    response.setProperties(properties);
+    response.setManagedVersioning(false);
     return response;
   }
 
@@ -504,7 +525,7 @@ public class Hive2Namespace implements LanceNamespace {
     }
   }
 
-  protected List<String> doListTables(String db) {
+  protected List<String> doListTables(String db, Boolean includeDeclared) {
     try {
       // First validate that database exists
       Database database = Hive2Util.getDatabaseOrNull(clientPool, db);
@@ -521,7 +542,13 @@ public class Hive2Namespace implements LanceNamespace {
           Optional<Table> table = Hive2Util.getTable(clientPool, db, tableName);
           if (table.isPresent()) {
             Map<String, String> params = table.get().getParameters();
-            if (params != null && "lance".equalsIgnoreCase(params.get("table_type"))) {
+            boolean isLanceTable =
+                params != null && "lance".equalsIgnoreCase(params.get("table_type"));
+            if (isLanceTable
+                && (LanceTableUtil.includeDeclared(includeDeclared)
+                    || LanceTableUtil.hasStorageComponents(
+                        table.get().getSd() != null ? table.get().getSd().getLocation() : null,
+                        Collections.emptyMap()))) {
               lanceTables.add(tableName);
             }
           }
@@ -592,7 +619,7 @@ public class Hive2Namespace implements LanceNamespace {
       // Check if database contains tables (RESTRICT behavior only, not for Cascade)
       boolean cascade = "Cascade".equalsIgnoreCase(behavior);
       if (!cascade) {
-        List<String> tables = doListTables(db);
+        List<String> tables = doListTables(db, true);
         if (!tables.isEmpty()) {
           throw new InvalidInputException(
               String.format(
