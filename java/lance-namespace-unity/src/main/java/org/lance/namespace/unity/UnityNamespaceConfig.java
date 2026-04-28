@@ -28,8 +28,8 @@ public class UnityNamespaceConfig {
   private static final String ROOT = "root";
 
   private static final String DEFAULT_API_PATH = "/api/2.1/unity-catalog";
-  private static final int DEFAULT_CONNECT_TIMEOUT = 10;
-  private static final int DEFAULT_READ_TIMEOUT = 60;
+  private static final int DEFAULT_CONNECT_TIMEOUT_MS = 10000;
+  private static final int DEFAULT_READ_TIMEOUT_MS = 60000;
   private static final int DEFAULT_MAX_RETRIES = 3;
 
   private final Map<String, String> properties;
@@ -59,11 +59,13 @@ public class UnityNamespaceConfig {
     // Inline PropertyUtil.propertyAsInt
     String connectTimeoutStr = properties.get(CONNECT_TIMEOUT);
     this.connectTimeout =
-        connectTimeoutStr != null ? Integer.parseInt(connectTimeoutStr) : DEFAULT_CONNECT_TIMEOUT;
+        connectTimeoutStr != null
+            ? Integer.parseInt(connectTimeoutStr)
+            : DEFAULT_CONNECT_TIMEOUT_MS;
 
     String readTimeoutStr = properties.get(READ_TIMEOUT);
     this.readTimeout =
-        readTimeoutStr != null ? Integer.parseInt(readTimeoutStr) : DEFAULT_READ_TIMEOUT;
+        readTimeoutStr != null ? Integer.parseInt(readTimeoutStr) : DEFAULT_READ_TIMEOUT_MS;
 
     String maxRetriesStr = properties.get(MAX_RETRIES);
     this.maxRetries = maxRetriesStr != null ? Integer.parseInt(maxRetriesStr) : DEFAULT_MAX_RETRIES;

@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 import pyarrow as pa
 import pyarrow.ipc as ipc
 
-from lance.namespace import LanceNamespace
+from lance_namespace import LanceNamespace
 from lance_namespace_urllib3_client.models import (
     CreateNamespaceRequest,
     CreateNamespaceResponse,
@@ -39,6 +39,12 @@ from lance_namespace_impls.rest_client import (
     NamespaceNotFoundException,
     TableAlreadyExistsException,
     TableNotFoundException,
+)
+from lance_namespace_impls.table_utils import (
+    has_storage_components,
+    include_declared,
+    is_only_declared,
+    merge_table_properties,
 )
 
 logger = logging.getLogger(__name__)
@@ -410,7 +416,9 @@ class UnityNamespace(LanceNamespace):
             tables = []
             if response and "tables" in response:
                 for table_data in response["tables"]:
-                    if self._is_lance_table(table_data):
+                    if self._should_include_lance_table(
+                        table_data, request.include_declared
+                    ):
                         tables.append(table_data["name"])
 
             tables = sorted(set(tables))
@@ -451,10 +459,13 @@ class UnityNamespace(LanceNamespace):
                 )
             ]
 
-            properties = {
-                self.TABLE_TYPE_KEY: self.TABLE_TYPE_LANCE,
-                self.MANAGED_BY_KEY: "catalog",
-            }
+            properties = merge_table_properties(
+                request.properties,
+                {
+                    self.TABLE_TYPE_KEY: self.TABLE_TYPE_LANCE,
+                    self.MANAGED_BY_KEY: "catalog",
+                },
+            )
 
             create_table = CreateTable(
                 name=table,
@@ -467,13 +478,17 @@ class UnityNamespace(LanceNamespace):
                 properties=properties,
             )
 
-            self.rest_client.post(
+            table_info = self.rest_client.post(
                 "/tables", create_table, response_converter=_parse_table_info
             )
 
             logger.info(f"Declared table: {catalog}.{schema}.{table}")
 
-            return DeclareTableResponse(location=table_path)
+            return DeclareTableResponse(
+                location=table_path,
+                properties=table_info.properties if table_info else properties,
+                managed_versioning=False,
+            )
 
         except RestClientException as e:
             if e.is_conflict():
@@ -517,7 +532,11 @@ class UnityNamespace(LanceNamespace):
 
             return DescribeTableResponse(
                 location=table_info.storage_location,
-                storage_options=table_info.properties,
+                properties=table_info.properties,
+                managed_versioning=False,
+                is_only_declared=is_only_declared(table_info.storage_location)
+                if request.check_declared
+                else None,
             )
 
         except RestClientException as e:
@@ -568,7 +587,11 @@ class UnityNamespace(LanceNamespace):
 
             logger.info(f"Deregistered table: {full_name}")
 
-            return DeregisterTableResponse(location=location)
+            return DeregisterTableResponse(
+                id=request.id,
+                location=location,
+                properties=table_info.properties,
+            )
 
         except RestClientException as e:
             if e.is_not_found():
@@ -595,6 +618,16 @@ class UnityNamespace(LanceNamespace):
         properties = table_data.get("properties", {})
         table_type = properties.get(self.TABLE_TYPE_KEY)
         return table_type and table_type.lower() == self.TABLE_TYPE_LANCE.lower()
+
+    def _should_include_lance_table(
+        self, table_data: Dict[str, Any], include_declared_value: Optional[bool]
+    ) -> bool:
+        """Check if a Unity table is Lance and matches include_declared."""
+        if not self._is_lance_table(table_data):
+            return False
+        if include_declared(include_declared_value):
+            return True
+        return has_storage_components(table_data.get("storage_location"))
 
     def _is_lance_table_info(self, table_info: TableInfo) -> bool:
         """Check if a TableInfo represents a Lance table."""

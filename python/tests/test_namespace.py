@@ -58,6 +58,14 @@ def test_connect_non_namespace_class():
         assert "does not implement LanceNamespace interface" in str(exc_info.value)
 
 
+def test_package_registers_namespace_aliases():
+    import lance_namespace_impls  # noqa: F401
+
+    ns = connect("iceberg", {"endpoint": "http://localhost:8181"})
+
+    assert ns.__class__.__name__ == "IcebergNamespace"
+
+
 def test_default_methods_raise_unsupported():
     from lance_namespace import UnsupportedOperationError
     from lance_namespace_urllib3_client.models import (

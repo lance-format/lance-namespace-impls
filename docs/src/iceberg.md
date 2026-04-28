@@ -50,7 +50,7 @@ The **table location** is stored in the `location` field of the Iceberg table me
 
 ## Lance Table Identification
 
-A table in Iceberg REST Catalog is identified as a Lance table when the `properties` map contains a key `table_type` with value `lance` (case insensitive). The `location` must point to a valid Lance table root directory. The Iceberg table itself serves as a metadata wrapper, with the actual data stored in Lance format.
+A table in Iceberg REST Catalog is identified as a Lance table when the `properties` map contains a key `table_type` with value `lance` (case insensitive). The `location` may be declared before a Lance dataset exists. The Iceberg table itself serves as a metadata wrapper, with the actual data stored in Lance format once the table is materialized.
 
 ## Basic Operations
 
@@ -146,7 +146,7 @@ The implementation:
     - `schema`: a dummy Iceberg schema with a single nullable string column `dummy`
     - `properties`: table properties including `table_type=lance`
 6. POST to `/v1/{prefix}/namespaces/{namespace}/tables`
-7. Return the declared table location
+7. Return the declared table location, catalog table properties, and `managed_versioning=false`
 
 **Error Handling:**
 
@@ -167,7 +167,8 @@ The implementation:
 3. Extract the namespace path from the remaining elements
 4. GET `/v1/{prefix}/namespaces/{namespace}/tables`
 5. For each table, load its metadata and filter tables where `properties.table_type=lance`
-6. Extract table names from the response identifiers
+6. If `include_declared=false`, only include catalog entries whose Iceberg metadata location can be opened as a Lance dataset
+7. Extract table names from the response identifiers
 
 **Error Handling:**
 
@@ -177,7 +178,7 @@ If the server returns an error, return error code `18` (Internal).
 
 ### DescribeTable
 
-Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. When `load_detailed_metadata=false`, only the table location and storage_options are returned; other fields (version, table_uri, schema, stats) are null.
+Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. The response includes the table location, Iceberg table properties as `properties`, and `managed_versioning=false`.
 
 The implementation:
 
@@ -187,7 +188,8 @@ The implementation:
 4. Extract the table name from the last element
 5. GET `/v1/{prefix}/namespaces/{namespace}/tables/{table}`
 6. Verify the table has `table_type=lance` property
-7. Return the table location and storage_options from `properties`
+7. Return the table location and Iceberg table properties
+8. If `check_declared=true`, set `is_only_declared=true` when the location cannot be opened as a Lance dataset
 
 **Error Handling:**
 
@@ -207,7 +209,8 @@ The implementation:
 2. Resolve the API prefix from the warehouse config cache
 3. Extract the namespace path from the middle elements
 4. Extract the table name from the last element
-5. DELETE `/v1/{prefix}/namespaces/{namespace}/tables/{table}?purgeRequested=false`
+5. Load the table metadata, then DELETE `/v1/{prefix}/namespaces/{namespace}/tables/{table}?purgeRequested=false`
+6. Return the table id, location, and Iceberg table properties
 
 **Error Handling:**
 

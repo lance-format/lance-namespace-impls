@@ -23,6 +23,12 @@
 
     <dependencies>
       <dependency>
+        <groupId>org.lance</groupId>
+        <artifactId>lance-namespace-impls-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <dependency>
         <groupId>software.amazon.awssdk</groupId>
         <artifactId>glue</artifactId>
         <version>${aws.sdk.version}</version>
@@ -92,6 +98,10 @@
                         </goals>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
             </plugin>
         </plugins>
     </build>

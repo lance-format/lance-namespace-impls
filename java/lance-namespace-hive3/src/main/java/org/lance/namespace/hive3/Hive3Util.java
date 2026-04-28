@@ -174,6 +174,7 @@ public class Hive3Util {
       params.putAll(properties);
     }
     params.put("table_type", "lance");
+    params.put("managed_by", "storage");
     return params;
   }
 }

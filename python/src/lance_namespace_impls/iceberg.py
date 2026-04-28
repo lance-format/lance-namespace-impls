@@ -14,7 +14,7 @@ import urllib.parse
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from lance.namespace import LanceNamespace
+from lance_namespace import LanceNamespace
 from lance_namespace_urllib3_client.models import (
     CreateNamespaceRequest,
     CreateNamespaceResponse,
@@ -43,6 +43,12 @@ from lance_namespace_impls.rest_client import (
     NamespaceNotFoundException,
     TableAlreadyExistsException,
     TableNotFoundException,
+)
+from lance_namespace_impls.table_utils import (
+    has_storage_components,
+    include_declared,
+    is_only_declared,
+    merge_table_properties,
 )
 
 logger = logging.getLogger(__name__)
@@ -378,8 +384,8 @@ class IcebergNamespace(LanceNamespace):
             if response and "identifiers" in response:
                 for table_id in response["identifiers"]:
                     table_name = table_id.get("name")
-                    if table_name and self._is_lance_table(
-                        prefix, namespace, table_name
+                    if table_name and self._should_include_lance_table(
+                        prefix, namespace, table_name, request.include_declared
                     ):
                         tables.append(table_name)
 
@@ -424,7 +430,10 @@ class IcebergNamespace(LanceNamespace):
                     f"{self.config.root}/{'/'.join(table_id[:-1])}/{table_name}"
                 )
 
-            properties = {self.TABLE_TYPE_KEY: self.TABLE_TYPE_LANCE}
+            properties = merge_table_properties(
+                request.properties,
+                {self.TABLE_TYPE_KEY: self.TABLE_TYPE_LANCE},
+            )
 
             create_request = {
                 "name": table_name,
@@ -434,13 +443,20 @@ class IcebergNamespace(LanceNamespace):
             }
 
             namespace_path = self._encode_namespace(namespace)
-            self.rest_client.post(
+            response = self.rest_client.post(
                 f"{prefix_path}/namespaces/{namespace_path}/tables", create_request
             )
 
             logger.info(f"Declared table: {'.'.join(table_id)}")
 
-            return DeclareTableResponse(location=table_path)
+            response_properties = (
+                response.get("metadata", {}).get("properties") if response else None
+            )
+            return DeclareTableResponse(
+                location=table_path,
+                properties=response_properties or properties,
+                managed_versioning=False,
+            )
 
         except RestClientException as e:
             if e.is_conflict():
@@ -507,7 +523,12 @@ class IcebergNamespace(LanceNamespace):
                 )
 
             return DescribeTableResponse(
-                location=metadata.get("location"), storage_options=props
+                location=metadata.get("location"),
+                properties=props,
+                managed_versioning=False,
+                is_only_declared=is_only_declared(metadata.get("location"))
+                if request.check_declared
+                else None,
             )
 
         except RestClientException as e:
@@ -547,9 +568,19 @@ class IcebergNamespace(LanceNamespace):
                 f"{prefix_path}/namespaces/{namespace_path}/tables/{encoded_table_name}"
             )
 
-            table_location = None
-            if response and "metadata" in response:
-                table_location = response["metadata"].get("location")
+            metadata = response.get("metadata") if response else None
+            if not metadata:
+                raise TableNotFoundException(f"Table not found: {'.'.join(request.id)}")
+
+            table_location = metadata.get("location")
+            properties = metadata.get("properties") or {}
+            if (
+                properties.get(self.TABLE_TYPE_KEY, "").lower()
+                != self.TABLE_TYPE_LANCE.lower()
+            ):
+                raise InvalidInputException(
+                    f"Table {'.'.join(request.id)} is not a Lance table"
+                )
 
             self.rest_client.delete(
                 f"{prefix_path}/namespaces/{namespace_path}/tables/{encoded_table_name}",
@@ -558,7 +589,11 @@ class IcebergNamespace(LanceNamespace):
 
             logger.info(f"Deregistered table: {'.'.join(table_id)}")
 
-            return DeregisterTableResponse(location=table_location)
+            return DeregisterTableResponse(
+                id=request.id,
+                location=table_location,
+                properties=properties,
+            )
 
         except RestClientException as e:
             if e.is_not_found():
@@ -578,10 +613,14 @@ class IcebergNamespace(LanceNamespace):
         """Parse identifier list."""
         return identifier if identifier else []
 
-    def _is_lance_table(
-        self, prefix: str, namespace: List[str], table_name: str
+    def _should_include_lance_table(
+        self,
+        prefix: str,
+        namespace: List[str],
+        table_name: str,
+        include_declared_value: Optional[bool],
     ) -> bool:
-        """Check if a table is a Lance table."""
+        """Check if a table is Lance and matches include_declared."""
         try:
             prefix_path = self._get_prefix_path(prefix)
             namespace_path = self._encode_namespace(namespace)
@@ -592,11 +631,16 @@ class IcebergNamespace(LanceNamespace):
             )
 
             if response and "metadata" in response:
-                props = response["metadata"].get("properties", {})
-                return (
+                metadata = response["metadata"]
+                props = metadata.get("properties", {})
+                if (
                     props.get(self.TABLE_TYPE_KEY, "").lower()
-                    == self.TABLE_TYPE_LANCE.lower()
-                )
+                    != self.TABLE_TYPE_LANCE.lower()
+                ):
+                    return False
+                return include_declared(
+                    include_declared_value
+                ) or has_storage_components(metadata.get("location"))
         except Exception as e:
             logger.debug(f"Failed to check if table is Lance table: {e}")
         return False

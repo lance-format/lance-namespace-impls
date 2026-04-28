@@ -282,9 +282,11 @@ class TestPolarisNamespace(unittest.TestCase):
         response = namespace.list_tables(request)
 
         self.assertEqual(sorted(response.tables), ["table1", "table2", "table3"])
-        mock_client.get.assert_called_once_with(
-            "/polaris/v1/test_catalog/namespaces/test_namespace/generic-tables"
+        self.assertEqual(
+            mock_client.get.call_args.args[0],
+            "/polaris/v1/test_catalog/namespaces/test_namespace/generic-tables",
         )
+        mock_client.get.assert_called_once()
 
     @patch("lance_namespace_impls.polaris.RestClient")
     def test_declare_table(self, mock_rest_client_class):
@@ -374,7 +376,8 @@ class TestPolarisNamespace(unittest.TestCase):
         response = namespace.describe_table(request)
 
         self.assertEqual(response.location, "/data/lance/ns/table")
-        self.assertEqual(response.storage_options, {"key": "value"})
+        self.assertEqual(response.properties, {"key": "value"})
+        self.assertFalse(response.managed_versioning)
         mock_client.get.assert_called_once_with(
             "/polaris/v1/test_catalog/namespaces/test_namespace/generic-tables/test_table"
         )
@@ -426,7 +429,10 @@ class TestPolarisNamespace(unittest.TestCase):
         mock_rest_client_class.return_value = mock_client
 
         mock_client.get.return_value = {
-            "table": {"base-location": "/data/lance/ns/table"}
+            "table": {
+                "format": "lance",
+                "base-location": "/data/lance/ns/table",
+            }
         }
 
         namespace = PolarisNamespace(**self.properties)

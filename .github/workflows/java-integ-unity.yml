@@ -55,8 +55,8 @@ jobs:
         run: |
           echo "Waiting for Unity Catalog to be ready..."
           timeout 120 bash -c '
-            until curl -sf http://localhost:8080/api/2.1/unity-catalog/catalogs > /dev/null 2>&1; do
-              echo "Waiting for Unity Catalog API..."
+            until [ "$(docker inspect --format="{{.State.Health.Status}}" unity-catalog 2>/dev/null)" = "healthy" ]; do
+              echo "Waiting for Unity Catalog container health..."
               sleep 5
             done
           ' || {
@@ -64,6 +64,7 @@ jobs:
             docker compose -f docker/unity/docker-compose.yml logs
             exit 1
           }
+          curl -sf http://localhost:8080/api/2.1/unity-catalog/catalogs > /dev/null
           echo "Unity Catalog is ready"
       - name: Create test catalog
         run: |

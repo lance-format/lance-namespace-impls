@@ -427,9 +427,8 @@ class TestIcebergNamespace(unittest.TestCase):
         response = namespace.describe_table(request)
 
         self.assertEqual(response.location, "/data/lance/ns/table")
-        self.assertEqual(
-            response.storage_options, {"table_type": "lance", "key": "value"}
-        )
+        self.assertEqual(response.properties, {"table_type": "lance", "key": "value"})
+        self.assertFalse(response.managed_versioning)
 
     @patch("lance_namespace_impls.iceberg.RestClient")
     def test_describe_table_not_lance(self, mock_rest_client_class):
@@ -482,7 +481,12 @@ class TestIcebergNamespace(unittest.TestCase):
 
         mock_client.get.side_effect = [
             {"defaults": {"prefix": "warehouse1"}},
-            {"metadata": {"location": "/data/lance/ns/table"}},
+            {
+                "metadata": {
+                    "location": "/data/lance/ns/table",
+                    "properties": {"table_type": "lance"},
+                }
+            },
         ]
 
         namespace = IcebergNamespace(**self.properties)

@@ -40,6 +40,7 @@ import org.lance.namespace.model.NamespaceExistsRequest;
 import org.lance.namespace.model.TableExistsRequest;
 import org.lance.namespace.rest.RestClient;
 import org.lance.namespace.rest.RestClientException;
+import org.lance.namespace.util.LanceTableUtil;
 import org.lance.namespace.util.ObjectIdentifier;
 import org.lance.namespace.util.ValidationUtil;
 
@@ -325,7 +326,8 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
       List<String> tables = new ArrayList<>();
       if (response != null && response.getIdentifiers() != null) {
         for (IcebergModels.TableIdentifier tableId : response.getIdentifiers()) {
-          if (isLanceTable(prefix, namespace, tableId.getName())) {
+          if (shouldIncludeTable(
+              prefix, namespace, tableId.getName(), request.getIncludeDeclared())) {
             tables.add(tableId.getName());
           }
         }
@@ -369,8 +371,9 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
       createRequest.setLocation(tablePath);
       createRequest.setSchema(IcebergModels.createDummySchema());
 
-      Map<String, String> properties = new HashMap<>();
-      properties.put(TABLE_TYPE_KEY, TABLE_TYPE_LANCE);
+      Map<String, String> properties =
+          LanceTableUtil.mergeTableProperties(
+              request.getProperties(), Collections.singletonMap(TABLE_TYPE_KEY, TABLE_TYPE_LANCE));
       createRequest.setProperties(properties);
 
       String namespacePath = encodeNamespace(namespace);
@@ -383,6 +386,8 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
 
       DeclareTableResponse result = new DeclareTableResponse();
       result.setLocation(tablePath);
+      result.setProperties(properties);
+      result.setManagedVersioning(false);
       return result;
     } catch (RestClientException e) {
       if (e.isConflict()) {
@@ -435,7 +440,13 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
 
       DescribeTableResponse result = new DescribeTableResponse();
       result.setLocation(response.getMetadata().getLocation());
-      result.setStorageOptions(props);
+      result.setProperties(props);
+      result.setManagedVersioning(false);
+      if (Boolean.TRUE.equals(request.getCheckDeclared())) {
+        result.setIsOnlyDeclared(
+            LanceTableUtil.isOnlyDeclared(
+                response.getMetadata().getLocation(), Collections.emptyMap()));
+      }
       return result;
     } catch (RestClientException e) {
       if (e.isNotFound()) {
@@ -470,17 +481,27 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
               prefixPath + "/namespaces/" + namespacePath + "/tables/" + encodedTableName,
               IcebergModels.LoadTableResponse.class);
 
-      String location = null;
-      if (getResponse != null && getResponse.getMetadata() != null) {
-        location = getResponse.getMetadata().getLocation();
+      if (getResponse == null || getResponse.getMetadata() == null) {
+        throw new TableNotFoundException("Table not found: " + tableId.stringStyleId());
       }
+      Map<String, String> properties = getResponse.getMetadata().getProperties();
+      if (properties == null
+          || !TABLE_TYPE_LANCE.equalsIgnoreCase(properties.get(TABLE_TYPE_KEY))) {
+        throw new InvalidInputException(
+            String.format(
+                "Table %s is not a Lance table (missing table_type property)",
+                tableId.stringStyleId()));
+      }
+      String location = getResponse.getMetadata().getLocation();
 
       restClient.delete(
           prefixPath + "/namespaces/" + namespacePath + "/tables/" + encodedTableName);
       LOG.info("Deregistered table: {}", tableId.stringStyleId());
 
       DeregisterTableResponse result = new DeregisterTableResponse();
+      result.setId(request.getId());
       result.setLocation(location);
+      result.setProperties(properties);
       return result;
     } catch (RestClientException e) {
       if (e.isNotFound()) {
@@ -513,7 +534,8 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
     }
   }
 
-  private boolean isLanceTable(String prefix, List<String> namespace, String tableName) {
+  private boolean shouldIncludeTable(
+      String prefix, List<String> namespace, String tableName, Boolean includeDeclared) {
     try {
       String prefixPath = getPrefixPath(prefix);
       String namespacePath = encodeNamespace(namespace);
@@ -526,7 +548,12 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
 
       if (response != null && response.getMetadata() != null) {
         Map<String, String> props = response.getMetadata().getProperties();
-        return props != null && TABLE_TYPE_LANCE.equalsIgnoreCase(props.get(TABLE_TYPE_KEY));
+        if (props == null || !TABLE_TYPE_LANCE.equalsIgnoreCase(props.get(TABLE_TYPE_KEY))) {
+          return false;
+        }
+        return LanceTableUtil.includeDeclared(includeDeclared)
+            || LanceTableUtil.hasStorageComponents(
+                response.getMetadata().getLocation(), Collections.emptyMap());
       }
     } catch (Exception e) {
       LOG.debug("Failed to check if table is Lance table: {}", e.getMessage());

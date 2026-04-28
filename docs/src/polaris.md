@@ -48,7 +48,7 @@ The **table location** is stored in the `base-location` field of the Generic Tab
 
 ## Lance Table Identification
 
-A table in Polaris is identified as a Lance table when it is a Generic Table with `format` set to `lance`. The `base-location` must point to a valid Lance table root directory. The table `properties` should contain `table_type=lance` for consistency with other catalog implementations.
+A table in Polaris is identified as a Lance table when it is a Generic Table with `format` set to `lance`. The `base-location` may be declared before a Lance dataset exists. The table `properties` should contain `table_type=lance` for consistency with other catalog implementations.
 
 ## Basic Operations
 
@@ -140,7 +140,7 @@ The implementation:
     - `doc`: optional description from properties
     - `properties`: table properties including `table_type=lance`
 4. POST to `/api/catalog/polaris/v1/{catalog}/namespaces/{namespace}/generic-tables`
-5. Return the created table location and properties
+5. Return the created table location, table properties, and `managed_versioning=false`
 
 **Error Handling:**
 
@@ -159,7 +159,8 @@ The implementation:
 1. Parse the namespace identifier to extract the catalog (first level) and namespace path
 2. Validate that at least 2 levels are provided (catalog + namespace)
 3. GET `/api/catalog/polaris/v1/{catalog}/namespaces/{namespace}/generic-tables`
-4. Extract table names from the response identifiers
+4. When `include_declared=true` or unset, extract table names from the response identifiers
+5. When `include_declared=false`, load each generic table and only include entries whose `base-location` can be opened as a Lance dataset
 
 **Error Handling:**
 
@@ -169,7 +170,7 @@ If the server returns an error, return error code `18` (Internal).
 
 ### DescribeTable
 
-Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. When `load_detailed_metadata=false`, only the table location and storage_options are returned; other fields (version, table_uri, schema, stats) are null.
+Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. The response includes the table location, Polaris table properties as `properties`, and `managed_versioning=false`.
 
 The implementation:
 
@@ -177,7 +178,8 @@ The implementation:
 2. Validate that at least 3 levels are provided (catalog + namespace + table)
 3. GET `/api/catalog/polaris/v1/{catalog}/namespaces/{namespace}/generic-tables/{table}`
 4. Verify the table format is `lance`
-5. Return the table location from `base-location` and storage_options from `properties`
+5. Return the table location from `base-location` and Polaris table properties
+6. If `check_declared=true`, set `is_only_declared=true` when the location cannot be opened as a Lance dataset
 
 **Error Handling:**
 
@@ -195,7 +197,8 @@ The implementation:
 
 1. Parse the table identifier to extract catalog (first level), namespace (middle levels), and table name (last level)
 2. Validate that at least 3 levels are provided (catalog + namespace + table)
-3. DELETE `/api/catalog/polaris/v1/{catalog}/namespaces/{namespace}/generic-tables/{table}`
+3. Load the generic table, then DELETE `/api/catalog/polaris/v1/{catalog}/namespaces/{namespace}/generic-tables/{table}`
+4. Return the table id, location, and Polaris table properties
 
 **Error Handling:**
 

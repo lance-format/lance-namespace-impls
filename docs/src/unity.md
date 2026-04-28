@@ -46,7 +46,7 @@ The **table location** is stored in the `storage_location` field of the Unity Ta
 
 ## Lance Table Identification
 
-A table in Unity Catalog is identified as a Lance table when it meets the following criteria: the `table_type` is `EXTERNAL`, and the `properties` map contains a key `table_type` with value `lance` (case insensitive). The `storage_location` must point to a valid Lance table root directory.
+A table in Unity Catalog is identified as a Lance table when it meets the following criteria: the `table_type` is `EXTERNAL`, and the `properties` map contains a key `table_type` with value `lance` (case insensitive). The `storage_location` may be declared before a Lance dataset exists; storage is checked only for `include_declared=false` listing or `check_declared=true` describe requests.
 
 Note: Unity Catalog does not natively recognize the `LANCE` data source format, so `data_source_format` is set to `TEXT` as a generic format for external tables. The actual format is determined by the `table_type=lance` property.
 
@@ -135,7 +135,7 @@ The implementation:
     - `storage_location`: the specified or default location
     - `properties`: including `table_type=lance`
 3. POST to `/tables` endpoint
-4. Return the created table location and properties
+4. Return the created table location, table properties, and `managed_versioning=false`
 
 **Error Handling:**
 
@@ -154,7 +154,8 @@ The implementation:
 1. Parse the namespace identifier (must be 2-level: catalog.schema)
 2. GET `/tables` with catalog_name and schema_name parameters
 3. Filter tables where `properties.table_type=lance`
-4. Sort the results
+4. If `include_declared=false`, only include catalog entries whose `storage_location` can be opened as a Lance dataset
+5. Sort the results
 
 **Error Handling:**
 
@@ -164,14 +165,15 @@ If the server returns an error, return error code `18` (Internal).
 
 ### DescribeTable
 
-Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. When `load_detailed_metadata=false`, only the table location and storage_options are returned; other fields (version, table_uri, schema, stats) are null.
+Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. The response includes the table location, Unity table properties as `properties`, and `managed_versioning=false`.
 
 The implementation:
 
 1. Parse the table identifier (must be 3-level: catalog.schema.table)
 2. GET `/tables/{catalog}.{schema}.{table}`
 3. Verify the table is a Lance table (check `properties.table_type=lance`)
-4. Return the table location from `storage_location` and storage_options from `properties`
+4. Return the table location from `storage_location` and Unity table properties
+5. If `check_declared=true`, set `is_only_declared=true` when the location cannot be opened as a Lance dataset
 
 **Error Handling:**
 
@@ -190,6 +192,7 @@ The implementation:
 1. Parse the table identifier (must be 3-level: catalog.schema.table)
 2. GET the table and verify it is a Lance table
 3. DELETE `/tables/{catalog}.{schema}.{table}`
+4. Return the table id, location, and Unity table properties
 
 **Error Handling:**
 

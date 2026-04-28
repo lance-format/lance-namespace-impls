@@ -96,6 +96,17 @@ jobs:
             "lance-namespace-glue"
             "lance-namespace-hive2"
             "lance-namespace-hive3"
+            "lance-namespace-iceberg"
+            "lance-namespace-unity"
+            "lance-namespace-polaris"
+          )
+
+          # Implementation artifacts also publish an attached shaded bundle classifier.
+          BUNDLE_ARTIFACTS=(
+            "lance-namespace-glue"
+            "lance-namespace-hive2"
+            "lance-namespace-hive3"
+            "lance-namespace-iceberg"
             "lance-namespace-unity"
             "lance-namespace-polaris"
           )
@@ -118,6 +129,17 @@ jobs:
                 echo "OK ${ARTIFACT_ID} is available"
               else
                 echo "X ${ARTIFACT_ID} is not yet available"
+                ALL_AVAILABLE=false
+              fi
+            done
+
+            for ARTIFACT_ID in "${BUNDLE_ARTIFACTS[@]}"; do
+              URL="https://repo1.maven.org/maven2/org/lance/${ARTIFACT_ID}/${VERSION}/${ARTIFACT_ID}-${VERSION}-bundle.jar"
+
+              if curl --head --silent --fail "$URL" > /dev/null 2>&1; then
+                echo "OK ${ARTIFACT_ID} bundle is available"
+              else
+                echo "X ${ARTIFACT_ID} bundle is not yet available"
                 ALL_AVAILABLE=false
               fi
             done

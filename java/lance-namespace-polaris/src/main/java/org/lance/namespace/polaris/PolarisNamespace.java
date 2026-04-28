@@ -40,6 +40,7 @@ import org.lance.namespace.model.NamespaceExistsRequest;
 import org.lance.namespace.model.TableExistsRequest;
 import org.lance.namespace.rest.RestClient;
 import org.lance.namespace.rest.RestClientException;
+import org.lance.namespace.util.LanceTableUtil;
 import org.lance.namespace.util.ObjectIdentifier;
 import org.lance.namespace.util.ValidationUtil;
 
@@ -50,7 +51,6 @@ import org.slf4j.LoggerFactory;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -286,8 +286,10 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
       List<String> namespaceParts = parts.subList(1, parts.size() - 1);
       String namespacePath = String.join(".", namespaceParts);
 
-      Map<String, String> properties = new HashMap<>();
-      properties.put(TABLE_TYPE_KEY, TABLE_FORMAT_LANCE);
+      Map<String, String> properties =
+          LanceTableUtil.mergeTableProperties(
+              request.getProperties(),
+              Collections.singletonMap(TABLE_TYPE_KEY, TABLE_FORMAT_LANCE));
       String comment = null;
 
       PolarisModels.CreateGenericTableRequest tableRequest =
@@ -303,7 +305,16 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
       LOG.info("Created Lance table: {}.{}.{}", catalog, namespacePath, tableName);
 
       DeclareTableResponse result = new DeclareTableResponse();
-      result.setLocation(response.getTable().getBaseLocation());
+      PolarisModels.GenericTable responseTable = response != null ? response.getTable() : null;
+      result.setLocation(
+          responseTable != null && responseTable.getBaseLocation() != null
+              ? responseTable.getBaseLocation()
+              : request.getLocation());
+      result.setProperties(
+          responseTable != null && responseTable.getProperties() != null
+              ? responseTable.getProperties()
+              : properties);
+      result.setManagedVersioning(false);
       return result;
     } catch (RestClientException e) {
       if (e.isConflict()) {
@@ -352,7 +363,12 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
 
       DescribeTableResponse result = new DescribeTableResponse();
       result.setLocation(table.getBaseLocation());
-      result.setStorageOptions(table.getProperties());
+      result.setProperties(table.getProperties());
+      result.setManagedVersioning(false);
+      if (Boolean.TRUE.equals(request.getCheckDeclared())) {
+        result.setIsOnlyDeclared(
+            LanceTableUtil.isOnlyDeclared(table.getBaseLocation(), Collections.emptyMap()));
+      }
       return result;
     } catch (RestClientException e) {
       if (e.isNotFound()) {
@@ -383,7 +399,10 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
       Set<String> tableNames = new LinkedHashSet<>();
       if (response.getIdentifiers() != null) {
         for (PolarisModels.TableIdentifier id : response.getIdentifiers()) {
-          tableNames.add(id.getName());
+          if (shouldIncludeTable(
+              catalog, namespacePath, id.getName(), request.getIncludeDeclared())) {
+            tableNames.add(id.getName());
+          }
         }
       }
       result.setTables(tableNames);
@@ -419,7 +438,18 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
                   + tableName,
               PolarisModels.LoadGenericTableResponse.class);
 
-      String location = getResponse.getTable().getBaseLocation();
+      PolarisModels.GenericTable table = getResponse != null ? getResponse.getTable() : null;
+      if (table == null) {
+        throw new TableNotFoundException("Table not found: " + tableId.stringStyleId());
+      }
+      if (!TABLE_FORMAT_LANCE.equalsIgnoreCase(table.getFormat())) {
+        throw new InvalidInputException(
+            String.format(
+                "Table %s is not a Lance table (format: %s)",
+                tableId.stringStyleId(), table.getFormat()));
+      }
+
+      String location = table.getBaseLocation();
       restClient.delete(
           "/polaris/v1/"
               + catalog
@@ -429,7 +459,9 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
               + tableName);
 
       DeregisterTableResponse result = new DeregisterTableResponse();
+      result.setId(request.getId());
       result.setLocation(location);
+      result.setProperties(table.getProperties());
       return result;
     } catch (RestClientException e) {
       if (e.isNotFound()) {
@@ -443,6 +475,33 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
   public void close() throws IOException {
     if (restClient != null) {
       restClient.close();
+    }
+  }
+
+  private boolean shouldIncludeTable(
+      String catalog, String namespacePath, String tableName, Boolean includeDeclared) {
+    if (LanceTableUtil.includeDeclared(includeDeclared)) {
+      return true;
+    }
+
+    try {
+      PolarisModels.LoadGenericTableResponse response =
+          restClient.get(
+              "/polaris/v1/"
+                  + catalog
+                  + "/namespaces/"
+                  + namespacePath
+                  + "/generic-tables/"
+                  + tableName,
+              PolarisModels.LoadGenericTableResponse.class);
+      PolarisModels.GenericTable table = response.getTable();
+      if (table == null || !TABLE_FORMAT_LANCE.equalsIgnoreCase(table.getFormat())) {
+        return false;
+      }
+      return LanceTableUtil.hasStorageComponents(table.getBaseLocation(), Collections.emptyMap());
+    } catch (Exception e) {
+      LOG.debug("Failed to check if table is Lance table: {}", e.getMessage());
+      return false;
     }
   }
 }

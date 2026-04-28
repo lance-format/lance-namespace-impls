@@ -122,7 +122,6 @@
         <groupId>org.lance</groupId>
         <artifactId>lance-namespace-impls-core</artifactId>
         <version>${project.version}</version>
-        <scope>test</scope>
       </dependency>
       <dependency>
         <groupId>org.junit.jupiter</groupId>
@@ -135,4 +134,13 @@
         <scope>test</scope>
       </dependency>
     </dependencies>
+
+    <build>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-shade-plugin</artifactId>
+        </plugin>
+      </plugins>
+    </build>
 </project>

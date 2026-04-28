@@ -38,7 +38,7 @@ The **table location** is stored in the `location` field of the table's `storage
 
 ## Lance Table Identification
 
-A table in HMS is identified as a Lance table when it meets the following criteria: the `tableType` is `EXTERNAL_TABLE`, and the `parameters` map contains a key `table_type` with value `lance` (case insensitive). The `location` in `storageDescriptor` must point to a valid Lance table root directory.
+A table in HMS is identified as a Lance table when it meets the following criteria: the `tableType` is `EXTERNAL_TABLE`, and the `parameters` map contains a key `table_type` with value `lance` (case insensitive). The `location` in `storageDescriptor` may be declared before a Lance dataset exists; storage is checked only for `include_declared=false` listing or `check_declared=true` describe requests.
 
 ## Basic Operations
 
@@ -116,8 +116,9 @@ The implementation:
 2. Verify the parent namespace exists
 3. Create an HMS Table object with `tableType=EXTERNAL_TABLE`
 4. Set the storage descriptor with the specified or default location. When location is not specified, it defaults to `{root}/{database}.db/{table}`
-5. Add `table_type=lance` to the table parameters
+5. Merge request `properties` with required table parameters such as `table_type=lance` and `managed_by=storage`
 6. Register the table in HMS
+7. Return the declared table location, table parameters, and `managed_versioning=false`
 
 **Error Handling:**
 
@@ -137,7 +138,8 @@ The implementation:
 2. Verify the namespace exists
 3. Retrieve all tables in the database
 4. Filter tables where `parameters.table_type=lance`
-5. Sort the results and apply pagination
+5. If `include_declared=false`, only include catalog entries whose storage descriptor location can be opened as a Lance dataset
+6. Sort the results and apply pagination
 
 **Error Handling:**
 
@@ -147,14 +149,15 @@ If the HMS connection fails, return error code `17` (ServiceUnavailable).
 
 ### DescribeTable
 
-Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. When `load_detailed_metadata=false`, only the table location is returned; other fields (version, table_uri, schema, stats) are null.
+Retrieves metadata for a Lance table. Only `load_detailed_metadata=false` is supported. The response includes the table location, HMS table parameters as `properties`, and `managed_versioning=false`.
 
 The implementation:
 
 1. Parse the table identifier
 2. Retrieve the Table object from HMS
 3. Validate that it is a Lance table (check `table_type=lance`)
-4. Return the table location from `storageDescriptor.location`
+4. Return the table location from `storageDescriptor.location` and the table parameters as `properties`
+5. If `check_declared=true`, set `is_only_declared=true` when the location cannot be opened as a Lance dataset
 
 **Error Handling:**
 
@@ -191,6 +194,7 @@ The implementation:
 1. Parse the table identifier
 2. Retrieve the Table object and validate it is a Lance table
 3. Drop the table from HMS with `deleteData=false`
+4. Return the table id, location, and table parameters
 
 **Error Handling:**
 
