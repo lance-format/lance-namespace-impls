@@ -24,10 +24,13 @@ import org.lance.namespace.model.DescribeNamespaceResponse;
 import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 import org.lance.namespace.model.DropNamespaceRequest;
+import org.lance.namespace.model.DropTableRequest;
+import org.lance.namespace.model.DropTableResponse;
 import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
+import org.lance.namespace.model.TableExistsRequest;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -57,6 +60,7 @@ import software.amazon.awssdk.services.glue.model.GetDatabasesRequest;
 import software.amazon.awssdk.services.glue.model.GetDatabasesResponse;
 import software.amazon.awssdk.services.glue.model.GetTableRequest;
 import software.amazon.awssdk.services.glue.model.GetTableResponse;
+import software.amazon.awssdk.services.glue.model.GetTableVersionRequest;
 import software.amazon.awssdk.services.glue.model.GetTablesRequest;
 import software.amazon.awssdk.services.glue.model.GetTablesResponse;
 import software.amazon.awssdk.services.glue.model.StorageDescriptor;
@@ -566,6 +570,25 @@ public class TestGlueNamespace {
   }
 
   @Test
+  public void testDescribeTableWithLanceVersionUsesCurrentGlueTable() {
+    Table tbl =
+        Table.builder()
+            .name("tbl")
+            .storageDescriptor(StorageDescriptor.builder().location("s3://bucket/tbl").build())
+            .parameters(ImmutableMap.of(TABLE_TYPE_PROP, LANCE_TABLE_TYPE_VALUE))
+            .build();
+    when(glue.getTable(any(GetTableRequest.class)))
+        .thenReturn(GetTableResponse.builder().table(tbl).build());
+
+    DescribeTableResponse resp =
+        glueNamespace.describeTable(
+            new DescribeTableRequest().id(ImmutableList.of("ns1", "tbl")).version(42L));
+
+    assertEquals("s3://bucket/tbl", resp.getLocation());
+    verify(glue, never()).getTableVersion(any(GetTableVersionRequest.class));
+  }
+
+  @Test
   public void testDescribeTableNonLanceTable() {
     Table tbl =
         Table.builder()
@@ -603,6 +626,76 @@ public class TestGlueNamespace {
   }
 
   @Test
+  public void testTableExistsBasic() {
+    Table tbl =
+        Table.builder()
+            .name("tbl")
+            .storageDescriptor(StorageDescriptor.builder().location("s3://bucket/tbl").build())
+            .parameters(ImmutableMap.of(TABLE_TYPE_PROP, LANCE_TABLE_TYPE_VALUE))
+            .build();
+    when(glue.getTable(any(GetTableRequest.class)))
+        .thenReturn(GetTableResponse.builder().table(tbl).build());
+
+    glueNamespace.tableExists(new TableExistsRequest().id(ImmutableList.of("ns1", "tbl")));
+  }
+
+  @Test
+  public void testTableExistsWithLanceVersionUsesCurrentGlueTable() {
+    Table tbl =
+        Table.builder()
+            .name("tbl")
+            .storageDescriptor(StorageDescriptor.builder().location("s3://bucket/tbl").build())
+            .parameters(ImmutableMap.of(TABLE_TYPE_PROP, LANCE_TABLE_TYPE_VALUE))
+            .build();
+    when(glue.getTable(any(GetTableRequest.class)))
+        .thenReturn(GetTableResponse.builder().table(tbl).build());
+
+    glueNamespace.tableExists(
+        new TableExistsRequest().id(ImmutableList.of("ns1", "tbl")).version(42L));
+
+    verify(glue, never()).getTableVersion(any(GetTableVersionRequest.class));
+  }
+
+  @Test
+  public void testTableExistsNonLanceTable() {
+    Table tbl =
+        Table.builder()
+            .name("tbl")
+            .storageDescriptor(StorageDescriptor.builder().location("s3://bucket/tbl").build())
+            .build();
+
+    when(glue.getTable(any(GetTableRequest.class)))
+        .thenReturn(GetTableResponse.builder().table(tbl).build());
+
+    assertThrows(
+        LanceNamespaceException.class,
+        () ->
+            glueNamespace.tableExists(new TableExistsRequest().id(ImmutableList.of("ns", "tbl"))));
+  }
+
+  @Test
+  public void testTableExistsNotFound() {
+    when(glue.getTable(any(GetTableRequest.class)))
+        .thenThrow(EntityNotFoundException.builder().message("Entity Not Found").build());
+
+    assertThrows(
+        LanceNamespaceException.class,
+        () ->
+            glueNamespace.tableExists(new TableExistsRequest().id(ImmutableList.of("ns1", "tbl"))));
+  }
+
+  @Test
+  public void testTableExistsWithInvalidId() {
+    assertThrows(
+        LanceNamespaceException.class,
+        () -> glueNamespace.tableExists(new TableExistsRequest().id(ImmutableList.of("ns1"))));
+    assertThrows(
+        LanceNamespaceException.class, () -> glueNamespace.tableExists(new TableExistsRequest()));
+
+    verify(glue, never()).getTable(any(GetTableRequest.class));
+  }
+
+  @Test
   public void testBasicDeregisterTable() {
     List<String> id = ImmutableList.of("ns1", "tbl");
     Table tbl =
@@ -622,6 +715,68 @@ public class TestGlueNamespace {
     assertEquals(id, resp.getId());
     assertEquals("s3://bucket/tbl", resp.getLocation());
     assertEquals(ImmutableMap.of("key", "val", "table_type", "lance"), resp.getProperties());
+  }
+
+  @Test
+  public void testBasicDropTable() {
+    List<String> id = ImmutableList.of("ns1", "tbl");
+    Table tbl =
+        Table.builder()
+            .name("tbl")
+            .storageDescriptor(StorageDescriptor.builder().location("s3://bucket/tbl").build())
+            .parameters(ImmutableMap.of("key", "val", TABLE_TYPE_PROP, LANCE_TABLE_TYPE_VALUE))
+            .build();
+    when(glue.getTable(any(GetTableRequest.class)))
+        .thenReturn(GetTableResponse.builder().table(tbl).build());
+    when(glue.deleteTable(any(DeleteTableRequest.class)))
+        .thenReturn(DeleteTableResponse.builder().build());
+
+    DropTableResponse resp = glueNamespace.dropTable(new DropTableRequest().id(id));
+
+    assertEquals(id, resp.getId());
+    assertEquals("s3://bucket/tbl", resp.getLocation());
+    assertEquals(ImmutableMap.of("key", "val", "table_type", "lance"), resp.getProperties());
+    verify(glue).deleteTable(any(DeleteTableRequest.class));
+  }
+
+  @Test
+  public void testDropTableRejectsNonLanceTable() {
+    Table tbl =
+        Table.builder()
+            .name("tbl")
+            .storageDescriptor(StorageDescriptor.builder().location("s3://bucket/tbl").build())
+            .build();
+
+    when(glue.getTable(any(GetTableRequest.class)))
+        .thenReturn(GetTableResponse.builder().table(tbl).build());
+
+    assertThrows(
+        LanceNamespaceException.class,
+        () -> glueNamespace.dropTable(new DropTableRequest().id(ImmutableList.of("ns", "tbl"))));
+    verify(glue, never()).deleteTable(any(DeleteTableRequest.class));
+  }
+
+  @Test
+  public void testDropTableNotFound() {
+    when(glue.getTable(any(GetTableRequest.class)))
+        .thenThrow(EntityNotFoundException.builder().message("Entity Not Found").build());
+
+    assertThrows(
+        LanceNamespaceException.class,
+        () -> glueNamespace.dropTable(new DropTableRequest().id(ImmutableList.of("ns1", "tbl"))));
+    verify(glue, never()).deleteTable(any(DeleteTableRequest.class));
+  }
+
+  @Test
+  public void testDropTableWithInvalidId() {
+    assertThrows(
+        LanceNamespaceException.class,
+        () -> glueNamespace.dropTable(new DropTableRequest().id(ImmutableList.of("ns1"))));
+    assertThrows(
+        LanceNamespaceException.class, () -> glueNamespace.dropTable(new DropTableRequest()));
+
+    verify(glue, never()).getTable(any(GetTableRequest.class));
+    verify(glue, never()).deleteTable(any(DeleteTableRequest.class));
   }
 
   @Test

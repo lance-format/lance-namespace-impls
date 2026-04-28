@@ -23,6 +23,10 @@ build-glue:
 	./mvnw spotless:apply -pl lance-namespace-glue -am
 	./mvnw install -pl lance-namespace-glue -am -DskipTests
 
+.PHONY: bundle-glue
+bundle-glue:
+	./mvnw package -pl lance-namespace-glue -am -DskipTests
+
 .PHONY: test-glue
 test-glue:
 	./mvnw test -pl lance-namespace-glue -Dtest="!*Integration"
@@ -128,6 +132,10 @@ clean:
 build:
 	./mvnw spotless:apply
 	./mvnw install -DskipTests
+
+.PHONY: bundle
+bundle:
+	./mvnw package -DskipTests
 
 .PHONY: test
 test:

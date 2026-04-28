@@ -31,11 +31,14 @@ import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 import org.lance.namespace.model.DropNamespaceRequest;
 import org.lance.namespace.model.DropNamespaceResponse;
+import org.lance.namespace.model.DropTableRequest;
+import org.lance.namespace.model.DropTableResponse;
 import org.lance.namespace.model.JsonArrowSchema;
 import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
+import org.lance.namespace.model.TableExistsRequest;
 import org.lance.namespace.util.LanceTableUtil;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -55,7 +58,6 @@ import software.amazon.awssdk.services.glue.model.GetDatabaseRequest;
 import software.amazon.awssdk.services.glue.model.GetDatabasesRequest;
 import software.amazon.awssdk.services.glue.model.GetDatabasesResponse;
 import software.amazon.awssdk.services.glue.model.GetTableRequest;
-import software.amazon.awssdk.services.glue.model.GetTableVersionRequest;
 import software.amazon.awssdk.services.glue.model.GetTablesRequest;
 import software.amazon.awssdk.services.glue.model.GetTablesResponse;
 import software.amazon.awssdk.services.glue.model.GlueException;
@@ -249,7 +251,7 @@ public class GlueNamespace implements LanceNamespace, Closeable {
     String namespaceName = request.getId().get(0);
     String tableName = request.getId().get(1);
 
-    Table table = getGlueTableAtVersion(namespaceName, tableName, request.getVersion());
+    Table table = getGlueTable(namespaceName, tableName);
     ensureLanceTable(table);
 
     DescribeTableResponse response = new DescribeTableResponse();
@@ -264,6 +266,16 @@ public class GlueNamespace implements LanceNamespace, Closeable {
           LanceTableUtil.isOnlyDeclared(response.getLocation(), config.getStorageOptions()));
     }
     return response;
+  }
+
+  @Override
+  public void tableExists(TableExistsRequest request) {
+    validateTableId(request.getId());
+    String namespaceName = request.getId().get(0);
+    String tableName = request.getId().get(1);
+
+    Table table = getGlueTable(namespaceName, tableName);
+    ensureLanceTable(table);
   }
 
   @Override
@@ -293,6 +305,39 @@ public class GlueNamespace implements LanceNamespace, Closeable {
     } catch (GlueException e) {
       throw GlueToLanceErrorConverter.serverError(
           e, "Failed to deregister table: %s.%s", namespaceName, tableName);
+    }
+  }
+
+  @Override
+  public DropTableResponse dropTable(DropTableRequest request) {
+    validateTableId(request.getId());
+    String namespaceName = request.getId().get(0);
+    String tableName = request.getId().get(1);
+
+    try {
+      Table table = getGlueTable(namespaceName, tableName);
+      ensureLanceTable(table);
+      String location =
+          table.storageDescriptor() != null ? table.storageDescriptor().location() : null;
+
+      deleteGlueTable(namespaceName, tableName, true);
+      if (location != null && !location.isEmpty()) {
+        safeDropDataset(location);
+      }
+
+      DropTableResponse response = new DropTableResponse();
+      response.setId(request.getId());
+      response.setLocation(location);
+      if (table.parameters() != null && !table.parameters().isEmpty()) {
+        response.setProperties(table.parameters());
+      }
+      return response;
+    } catch (EntityNotFoundException e) {
+      throw GlueToLanceErrorConverter.notFound(
+          e, "Glue table not found: %s.%s", namespaceName, tableName);
+    } catch (GlueException e) {
+      throw GlueToLanceErrorConverter.serverError(
+          e, "Failed to drop table: %s.%s", namespaceName, tableName);
     }
   }
 
@@ -606,37 +651,6 @@ public class GlueNamespace implements LanceNamespace, Closeable {
     } catch (GlueException e) {
       throw GlueToLanceErrorConverter.serverError(
           e, "Failed to delete Glue table: %s.%s", namespaceName, tableName);
-    }
-  }
-
-  private Table getGlueTableAtVersion(String namespaceName, String tableName, Long version) {
-    try {
-      Table table;
-      if (version != null) {
-        // Get specific table version
-        String tableVersion = String.valueOf(version);
-        table =
-            glueClient
-                .getTableVersion(
-                    GetTableVersionRequest.builder()
-                        .catalogId(config.catalogId())
-                        .databaseName(namespaceName)
-                        .tableName(tableName)
-                        .versionId(tableVersion)
-                        .build())
-                .tableVersion()
-                .table();
-      } else {
-        // Get current table version
-        table = getGlueTable(namespaceName, tableName);
-      }
-      return table;
-    } catch (EntityNotFoundException e) {
-      throw GlueToLanceErrorConverter.notFound(
-          e, "Glue table not found: %s.%s", namespaceName, tableName);
-    } catch (GlueException e) {
-      throw GlueToLanceErrorConverter.serverError(
-          e, "Failed to get Glue table: %s.%s", namespaceName, tableName);
     }
   }
 

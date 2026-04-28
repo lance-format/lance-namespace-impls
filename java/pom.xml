@@ -84,6 +84,7 @@
         </spotless.license.header>
 
         <maven-surefire-plugin.version>3.2.5</maven-surefire-plugin.version>
+        <maven-shade-plugin.version>3.5.3</maven-shade-plugin.version>
     </properties>
 
     <modules>
@@ -281,6 +282,54 @@
                             <goals>
                                 <goal>jar-no-fork</goal>
                             </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-shade-plugin</artifactId>
+                    <version>${maven-shade-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>bundle-jar</id>
+                            <phase>package</phase>
+                            <goals>
+                                <goal>shade</goal>
+                            </goals>
+                            <configuration>
+                                <shadedArtifactAttached>true</shadedArtifactAttached>
+                                <shadedClassifierName>bundle</shadedClassifierName>
+                                <createDependencyReducedPom>false</createDependencyReducedPom>
+                                <artifactSet>
+                                    <excludes>
+                                        <exclude>org.lance:lance-core</exclude>
+                                        <exclude>org.lance:lance-namespace-core</exclude>
+                                        <exclude>org.lance:lance-namespace-apache-client</exclude>
+                                        <exclude>org.apache.arrow:*</exclude>
+                                        <exclude>org.questdb:jar-jni</exclude>
+                                        <exclude>com.google.flatbuffers:flatbuffers-java</exclude>
+                                        <exclude>org.eclipse.collections:*</exclude>
+                                        <exclude>io.netty:*</exclude>
+                                        <exclude>org.slf4j:*</exclude>
+                                    </excludes>
+                                </artifactSet>
+                                <transformers>
+                                    <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
+                                    <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheLicenseResourceTransformer" />
+                                    <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer" />
+                                </transformers>
+                                <filters>
+                                    <filter>
+                                        <artifact>*:*</artifact>
+                                        <excludes>
+                                            <exclude>LICENSE</exclude>
+                                            <exclude>META-INF/*.SF</exclude>
+                                            <exclude>META-INF/*.DSA</exclude>
+                                            <exclude>META-INF/*.RSA</exclude>
+                                        </excludes>
+                                    </filter>
+                                </filters>
+                            </configuration>
                         </execution>
                     </executions>
                 </plugin>
