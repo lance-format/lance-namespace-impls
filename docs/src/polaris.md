@@ -1,4 +1,4 @@
-# Apache Polaris Lance Namespace Implementation Spec
+# Apache Polaris
 
 This document describes how the Polaris Catalog implements the Lance Namespace client spec.
 

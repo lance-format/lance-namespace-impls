@@ -1,4 +1,4 @@
-# AWS Glue Data Catalog Lance Namespace Implementation Spec
+# AWS Glue Data Catalog
 
 This document describes how the AWS Glue Data Catalog
 implements the Lance Namespace client spec.

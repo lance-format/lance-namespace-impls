@@ -1,4 +1,4 @@
-# Apache Hive 3+.X MetaStore Lance Namespace Implementation Spec
+# Apache Hive 3+.X MetaStore
 
 This document describes how the Hive 3.x MetaStore implements the Lance Namespace client spec.
 
