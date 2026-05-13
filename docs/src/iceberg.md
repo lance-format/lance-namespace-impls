@@ -1,4 +1,4 @@
-#  Apache Iceberg REST Catalog Lance Namespace Implementation Spec
+# Apache Iceberg REST Catalog
 
 This document describes how the Apache Iceberg REST Catalog implements the Lance Namespace client spec.
 

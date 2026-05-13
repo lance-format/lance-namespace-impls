@@ -1,4 +1,4 @@
-# Apache Hive 2.X MetaStore Lance Namespace Implementation Spec
+# Apache Hive 2.X MetaStore
 
 This document describes how the Hive 2.x MetaStore implements the Lance Namespace client spec.
 

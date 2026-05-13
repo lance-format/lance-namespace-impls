@@ -1,4 +1,4 @@
-# Unity Catalog Lance Namespace Implementation Spec
+# Unity Catalog
 
 This document describes how the Unity Catalog implements the Lance Namespace client spec.
 
