@@ -45,6 +45,7 @@ register_namespace_impl("hive3", "lance_namespace_impls.hive3.Hive3Namespace")
 register_namespace_impl("iceberg", "lance_namespace_impls.iceberg.IcebergNamespace")
 register_namespace_impl("polaris", "lance_namespace_impls.polaris.PolarisNamespace")
 register_namespace_impl("unity", "lance_namespace_impls.unity.UnityNamespace")
+register_namespace_impl("goosefs", "lance_namespace_impls.goosefs.GooseFSNamespace")
 
 __all__ = [
     "GlueNamespace",

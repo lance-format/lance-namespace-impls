@@ -16,7 +16,6 @@ Usage:
     # Connect to GooseFS Table Master
     namespace = LanceNamespaces.connect("goosefs", {
         "uri": "goosefs://localhost:9220",
-        "root": "/my/dir",  # Or "cosn://bucket/prefix"
     })
 
     # List databases
@@ -29,15 +28,13 @@ Usage:
 
 Configuration Properties:
     uri (str): GooseFS master URI (e.g., "goosefs://localhost:9220")
-    root (str): Storage root location for Lance tables (e.g., "/my/dir" or "cosn://bucket/prefix")
     connect_timeout (int): Connection timeout in milliseconds (default: 10000)
     read_timeout (int): Read timeout in milliseconds (default: 30000)
     max_retries (int): Maximum number of retry attempts (default: 3)
 """
 
 import logging
-import os
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from lance.namespace import LanceNamespace
 from lance_namespace_urllib3_client.models import (
@@ -154,32 +151,82 @@ except ImportError:
     DescribeTableVersionResponse = None
 
 from lance_namespace_impls.rest_client import (
-    InvalidInputException,
     NamespaceNotFoundException,
     TableNotFoundException,
 )
 
+# goosefs-metastore-client (and its bundled `grpc_files` proto package) is an
+# optional dependency, installed via the `goosefs` extra. Gate every gRPC
+# import behind a single flag so the rest of `lance_namespace_impls` keeps
+# importing even when GooseFS isn't installed.
 try:
-    import sys
-    import os
-    goosefs_metastore_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'goosefs-metastore-client')
-    if os.path.exists(goosefs_metastore_path):
-        sys.path.insert(0, goosefs_metastore_path)
-        # Proto-generated files in the grpc_files directory use non-package-level imports
-        # (e.g., import common_pb2), so we need to add the grpc_files directory to sys.path as well
-        grpc_files_path = os.path.join(goosefs_metastore_path, 'grpc_files')
-        if os.path.exists(grpc_files_path) and grpc_files_path not in sys.path:
-            sys.path.insert(0, grpc_files_path)
-    from goosefs_metastore_client.goosefs_metastore_client import GoosefsMetastoreClient
+    from goosefs_metastore_client.goosefs_metastore_client import (
+        GoosefsMetastoreClient,
+    )
+    from grpc_files.table_master_pb2 import (
+        AlterColumnsEntry,
+        AlterTableAddColumnsPRequest,
+        AlterTableAlterColumnsPRequest,
+        AlterTableDropColumnsPRequest,
+        AlterTransactionAction,
+        AlterTransactionPRequest,
+        AlterTransactionSetProperty,
+        AlterTransactionSetStatus,
+        AlterTransactionUnsetProperty,
+        AnalyzeTableQueryPlanPRequest,
+        BatchCommitTablesPRequest,
+        BatchCreateTableVersionsPRequest,
+        BatchDeleteTableVersionsPRequest,
+        CountTableRowsPRequest,
+        CreateEmptyTablePRequest,
+        CreateNamespacePRequest,
+        CreateTableIndexPRequest,
+        CreateTablePRequest,
+        CreateTableScalarIndexPRequest,
+        CreateTableTagPRequest,
+        CreateTableVersionPRequest,
+        DeclareTablePRequest,
+        DeleteFromTablePRequest,
+        DeleteTableTagPRequest,
+        DeregisterTablePRequest,
+        DescribeNamespacePRequest,
+        DescribeTableIndexStatsPRequest,
+        DescribeTablePRequest,
+        DescribeTableVersionPRequest,
+        DescribeTransactionPRequest,
+        DropNamespacePRequest,
+        DropTableIndexPRequest,
+        DropTablePRequest,
+        ExplainTableQueryPlanPRequest,
+        GetTableStatsPRequest,
+        GetTableTagVersionPRequest,
+        InsertIntoTablePRequest,
+        ListAllTablesPRequest,
+        ListNamespacesPRequest,
+        ListTableIndicesPRequest,
+        ListTablesPRequest,
+        ListTableTagsPRequest,
+        ListTableVersionsPRequest,
+        MergeInsertIntoTablePRequest,
+        NamespaceExistsPRequest,
+        NewColumnTransform,
+        QueryTablePRequest,
+        RegisterTablePRequest,
+        RenameTablePRequest,
+        RestoreTablePRequest,
+        TableExistsPRequest,
+        UpdateTablePRequest,
+        UpdateTableSchemaMetadataPRequest,
+        UpdateTableTagPRequest,
+        VersionRange,
+    )
+
     GOOSEFS_CLIENT_AVAILABLE = True
 except ImportError:
     GoosefsMetastoreClient = None
     GOOSEFS_CLIENT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-
-# Constants
-LANCE_CATALOG = "lance"
 
 
 def _parse_goosefs_uri(uri: str) -> tuple:
@@ -197,8 +244,7 @@ def _parse_goosefs_uri(uri: str) -> tuple:
     parsed = urlparse(uri)
     if parsed.scheme not in ("goosefs"):
         raise ValueError(
-            f"Invalid GooseFS URI scheme: {parsed.scheme}. "
-            "Expected 'goosefs://'"
+            f"Invalid GooseFS URI scheme: {parsed.scheme}. " "Expected 'goosefs://'"
         )
     host = parsed.hostname or "localhost"
     port = parsed.port or 9220
@@ -209,18 +255,14 @@ class GooseFSNamespace(LanceNamespace):
     """
     Lance GooseFS Namespace implementation using GooseFS Table Master.
 
-    This implementation uses GooseFS's Table Master service to manage table metadata,
-    while storing the actual Lance table data in the configured storage root.
-
-    Namespace hierarchy:
-    - Root level (empty id): Lists all databases
-    - Database level (id=["db_name"]): Lists all tables in the database
+    This implementation delegates all metadata management to GooseFS's
+    Table Master service. The full namespace identifier is whatever the
+    caller passes — there is no implicit "root" prefix or default database.
 
     Example:
         >>> from lance_namespace_impls import LanceNamespaces
         >>> namespace = LanceNamespaces.connect("goosefs", {
         ...     "uri": "goosefs://localhost:9220",
-        ...     "root": "/data/lance",
         ... })
         >>> # List all databases
         >>> response = namespace.list_namespaces(ListNamespacesRequest())
@@ -234,10 +276,10 @@ class GooseFSNamespace(LanceNamespace):
 
         Args:
             uri: GooseFS master URI (e.g., "goosefs://localhost:9220")
-            root: Storage root location for Lance tables
             timeout: Timeout in seconds (default: 30)
             max_retries: Maximum number of retry attempts (default: 3)
-            authentication_enabled: Whether to enable SASL authentication (default: True)
+            authentication_enabled: Whether to enable SASL authentication
+                (default: False)
             username: Username for authentication (optional)
             impersonation_user: Optional user to impersonate
             **properties: Additional configuration properties
@@ -247,7 +289,7 @@ class GooseFSNamespace(LanceNamespace):
                 "GooseFS metastore client not found. "
                 "Please ensure goosefs-metastore-client is installed."
             )
-        
+
         # Parse URI if provided
         if "uri" in properties:
             self.host, self.port = _parse_goosefs_uri(properties["uri"])
@@ -255,14 +297,36 @@ class GooseFSNamespace(LanceNamespace):
             self.host = properties.get("host", "localhost")
             self.port = int(properties.get("port", 9220))
 
-        self.root = properties.get("root", os.getcwd())
         self.timeout = int(properties.get("timeout", 30))
         self.max_retries = int(properties.get("max_retries", 3))
-        self.authentication_enabled = properties.get("authentication_enabled", "true").lower() == "true"
+        # Match GoosefsMetastoreClient.from_properties: default False, accept bool or str.
+        auth_enabled = properties.get("authentication_enabled", False)
+        if isinstance(auth_enabled, str):
+            self.authentication_enabled = auth_enabled.lower() == "true"
+        else:
+            self.authentication_enabled = bool(auth_enabled)
         self.username = properties.get("username")
         self.impersonation_user = properties.get("impersonation_user")
 
+        # Properties that describe how *created* namespaces should be
+        # configured (rather than how the client connects). They are pulled
+        # out of the connect-time options and auto-merged into every
+        # subsequent CreateNamespaceRequest.properties, where the request
+        # caller's explicit value (if any) wins.
+        self._namespace_default_properties: Dict[str, str] = {}
+        for key in ("manifest_enabled", "dir_listing_enabled"):
+            if key in properties:
+                value = properties[key]
+                if isinstance(value, bool):
+                    value = "true" if value else "false"
+                self._namespace_default_properties[key] = str(value)
+
+        # Persist properties for `client` to pass to from_properties().
+        # Lock in our authentication_enabled default (False) so that we
+        # don't depend on the installed client's own default (which has
+        # historically been True in published 0.1.7 but False in HEAD).
         self._properties = properties.copy()
+        self._properties["authentication_enabled"] = self.authentication_enabled
         self._client: Optional[GoosefsMetastoreClient] = None
 
     def namespace_id(self) -> str:
@@ -273,46 +337,11 @@ class GooseFSNamespace(LanceNamespace):
     def client(self) -> GoosefsMetastoreClient:
         """Get the GooseFS client, initializing it if necessary."""
         if self._client is None:
-            self._client = GoosefsMetastoreClient.from_properties(
-                **self._properties
-            )
+            self._client = GoosefsMetastoreClient.from_properties(**self._properties)
             self._client.connect()
         return self._client
 
-    def _is_root_namespace(self, identifier: Optional[List[str]]) -> bool:
-        """Check if the identifier refers to the root namespace."""
-        return not identifier or len(identifier) == 0
-
-    def _normalize_identifier(self, identifier: List[str]) -> tuple:
-        """
-        Normalize identifier to (database, table) tuple.
-
-        GooseFS uses a 2-level namespace: database > table
-
-        Args:
-            identifier: List of namespace/table identifiers
-
-        Returns:
-            Tuple of (database_name, table_name)
-
-        Raises:
-            ValueError: If identifier has invalid number of levels
-        """
-        if len(identifier) == 1:
-            # Just table name, use default database
-            return ("default", identifier[0])
-        elif len(identifier) == 2:
-            return (identifier[0], identifier[1])
-        else:
-            raise ValueError(f"Invalid identifier: {identifier}")
-
-    def _get_table_location(self, database: str, table: str) -> str:
-        """Get the storage location for a table."""
-        return os.path.join(self.root, database, table)
-
-    def list_namespaces(
-        self, request: ListNamespacesRequest
-    ) -> ListNamespacesResponse:
+    def list_namespaces(self, request: ListNamespacesRequest) -> ListNamespacesResponse:
         """
         List namespaces at the given level.
 
@@ -323,7 +352,6 @@ class GooseFSNamespace(LanceNamespace):
             List of namespace names
         """
         try:
-            from grpc_files.table_master_pb2 import ListNamespacesPRequest
             grpc_request = ListNamespacesPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
@@ -331,7 +359,6 @@ class GooseFSNamespace(LanceNamespace):
                 grpc_request.page_token = request.page_token
             if request.limit is not None:
                 grpc_request.limit = request.limit
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.list_namespaces(grpc_request)
             if isinstance(result, dict):
                 return ListNamespacesResponse(**result)
@@ -354,11 +381,9 @@ class GooseFSNamespace(LanceNamespace):
             Namespace properties
         """
         try:
-            from grpc_files.table_master_pb2 import DescribeNamespacePRequest
             grpc_request = DescribeNamespacePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.describe_namespace(grpc_request)
             if isinstance(result, dict):
                 return DescribeNamespaceResponse(properties=result)
@@ -385,15 +410,17 @@ class GooseFSNamespace(LanceNamespace):
             Create namespace response
         """
         try:
-            from grpc_files.table_master_pb2 import CreateNamespacePRequest
             grpc_request = CreateNamespacePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
-            if hasattr(request, 'properties') and request.properties:
+            # Connection-level namespace defaults come first; the request's
+            # own properties win where they overlap.
+            if self._namespace_default_properties:
+                grpc_request.properties.update(self._namespace_default_properties)
+            if hasattr(request, "properties") and request.properties:
                 grpc_request.properties.update(request.properties)
             if request.mode:
                 grpc_request.mode = request.mode
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.create_namespace(grpc_request)
             if isinstance(result, dict):
                 return CreateNamespaceResponse(**result)
@@ -403,9 +430,7 @@ class GooseFSNamespace(LanceNamespace):
             logger.error(f"Failed to create namespace {request.id}: {e}")
             raise
 
-    def drop_namespace(
-        self, request: DropNamespaceRequest
-    ) -> DropNamespaceResponse:
+    def drop_namespace(self, request: DropNamespaceRequest) -> DropNamespaceResponse:
         """
         Drop a namespace.
 
@@ -416,7 +441,6 @@ class GooseFSNamespace(LanceNamespace):
             Drop namespace response
         """
         try:
-            from grpc_files.table_master_pb2 import DropNamespacePRequest
             grpc_request = DropNamespacePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
@@ -424,7 +448,6 @@ class GooseFSNamespace(LanceNamespace):
                 grpc_request.mode = request.mode
             if request.behavior:
                 grpc_request.behavior = request.behavior
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.drop_namespace(grpc_request)
             if isinstance(result, dict):
                 return DropNamespaceResponse(**result)
@@ -449,7 +472,6 @@ class GooseFSNamespace(LanceNamespace):
             List of table names
         """
         try:
-            from grpc_files.table_master_pb2 import ListTablesPRequest
             grpc_request = ListTablesPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
@@ -457,7 +479,6 @@ class GooseFSNamespace(LanceNamespace):
                 grpc_request.page_token = request.page_token
             if request.limit is not None:
                 grpc_request.limit = request.limit
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.list_tables(grpc_request)
             if isinstance(result, dict):
                 return ListTablesResponse(**result)
@@ -471,9 +492,7 @@ class GooseFSNamespace(LanceNamespace):
             logger.error(f"Failed to list tables in namespace {request.id}: {e}")
             raise
 
-    def describe_table(
-        self, request: DescribeTableRequest
-    ) -> DescribeTableResponse:
+    def describe_table(self, request: DescribeTableRequest) -> DescribeTableResponse:
         """
         Describe a table.
 
@@ -484,19 +503,20 @@ class GooseFSNamespace(LanceNamespace):
             Table description with location
         """
         try:
-            from grpc_files.table_master_pb2 import DescribeTablePRequest
             grpc_request = DescribeTablePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             if request.version is not None:
                 grpc_request.version = request.version
-            if hasattr(request, 'load_detailed_metadata') and request.load_detailed_metadata:
+            if (
+                hasattr(request, "load_detailed_metadata")
+                and request.load_detailed_metadata
+            ):
                 grpc_request.load_detailed_metadata = request.load_detailed_metadata
-            if hasattr(request, 'with_table_uri') and request.with_table_uri:
+            if hasattr(request, "with_table_uri") and request.with_table_uri:
                 grpc_request.with_table_uri = request.with_table_uri
-            if hasattr(request, 'vend_credentials') and request.vend_credentials:
+            if hasattr(request, "vend_credentials") and request.vend_credentials:
                 grpc_request.vend_credentials = request.vend_credentials
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.describe_table(grpc_request)
             if isinstance(result, dict):
                 return DescribeTableResponse(**result)
@@ -508,9 +528,7 @@ class GooseFSNamespace(LanceNamespace):
             logger.error(f"Failed to describe table {request.id}: {e}")
             raise
 
-    def declare_table(
-        self, request: DeclareTableRequest
-    ) -> DeclareTableResponse:
+    def declare_table(self, request: DeclareTableRequest) -> DeclareTableResponse:
         """
         Declare a table (register table metadata).
 
@@ -521,17 +539,18 @@ class GooseFSNamespace(LanceNamespace):
             Declare table response with location
         """
         try:
-            from grpc_files.table_master_pb2 import DeclareTablePRequest
             grpc_request = DeclareTablePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             if request.location:
                 grpc_request.location = request.location
-            if hasattr(request, 'properties') and request.properties:
+            if hasattr(request, "properties") and request.properties:
                 grpc_request.properties.update(request.properties)
-            if hasattr(request, 'vend_credentials') and request.vend_credentials is not None:
+            if (
+                hasattr(request, "vend_credentials")
+                and request.vend_credentials is not None
+            ):
                 grpc_request.vend_credentials = request.vend_credentials
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.declare_table(grpc_request)
             if isinstance(result, dict):
                 return DeclareTableResponse(**result)
@@ -554,11 +573,9 @@ class GooseFSNamespace(LanceNamespace):
             Deregister table response
         """
         try:
-            from grpc_files.table_master_pb2 import DeregisterTablePRequest
             grpc_request = DeregisterTablePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.deregister_table(grpc_request)
             if isinstance(result, dict):
                 return DeregisterTableResponse(**result)
@@ -580,11 +597,9 @@ class GooseFSNamespace(LanceNamespace):
             request: The namespace exists request
         """
         try:
-            from grpc_files.table_master_pb2 import NamespaceExistsPRequest
             grpc_request = NamespaceExistsPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
-            grpc_request.catalog = LANCE_CATALOG
             exists = self.client.namespace_exists(grpc_request)
             if not exists:
                 raise NamespaceNotFoundException(
@@ -593,10 +608,6 @@ class GooseFSNamespace(LanceNamespace):
         except NamespaceNotFoundException:
             raise
         except Exception as e:
-            if "not found" in str(e).lower():
-                raise NamespaceNotFoundException(
-                    f"Namespace {request.id} does not exist"
-                )
             logger.error(f"Failed to check namespace existence {request.id}: {e}")
             raise
 
@@ -611,36 +622,21 @@ class GooseFSNamespace(LanceNamespace):
             request: The table exists request
         """
         try:
-            from grpc_files.table_master_pb2 import TableExistsPRequest
             grpc_request = TableExistsPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             if request.version is not None:
                 grpc_request.version = request.version
-            grpc_request.catalog = LANCE_CATALOG
             exists = self.client.table_exists(grpc_request)
             if not exists:
-                raise TableNotFoundException(
-                    f"Table {request.id} does not exist"
-                )
+                raise TableNotFoundException(f"Table {request.id} does not exist")
         except (NamespaceNotFoundException, TableNotFoundException):
             raise
         except Exception as e:
-            if "not found" in str(e).lower():
-                err_msg = str(e).lower()
-                if "database" in err_msg or "namespace" in err_msg:
-                    raise NamespaceNotFoundException(
-                        f"Namespace for {request.id} does not exist"
-                    )
-                raise TableNotFoundException(
-                    f"Table {request.id} does not exist"
-                )
             logger.error(f"Failed to check table existence {request.id}: {e}")
             raise
 
-    def register_table(
-        self, request: RegisterTableRequest
-    ) -> RegisterTableResponse:
+    def register_table(self, request: RegisterTableRequest) -> RegisterTableResponse:
         """
         Register a table.
 
@@ -651,16 +647,14 @@ class GooseFSNamespace(LanceNamespace):
             Register table response with location and storage_options
         """
         try:
-            from grpc_files.table_master_pb2 import RegisterTablePRequest
             grpc_request = RegisterTablePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             grpc_request.location = request.location
             if request.mode:
                 grpc_request.mode = request.mode
-            if hasattr(request, 'properties') and request.properties:
+            if hasattr(request, "properties") and request.properties:
                 grpc_request.properties.update(request.properties)
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.register_table(grpc_request)
             if isinstance(result, dict):
                 return RegisterTableResponse(**result)
@@ -683,11 +677,9 @@ class GooseFSNamespace(LanceNamespace):
             Drop table response
         """
         try:
-            from grpc_files.table_master_pb2 import DropTablePRequest
             grpc_request = DropTablePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
-            grpc_request.catalog = LANCE_CATALOG
             self.client.drop_table(grpc_request)
             return DropTableResponse(id=request.id)
         except Exception as e:
@@ -705,7 +697,6 @@ class GooseFSNamespace(LanceNamespace):
             Number of rows
         """
         try:
-            from grpc_files.table_master_pb2 import CountTableRowsPRequest
             grpc_request = CountTableRowsPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
@@ -713,7 +704,6 @@ class GooseFSNamespace(LanceNamespace):
                 grpc_request.predicate = request.predicate
             if request.version is not None:
                 grpc_request.version = request.version
-            grpc_request.catalog = LANCE_CATALOG
             return self.client.count_table_rows(grpc_request)
         except Exception as e:
             logger.error(f"Failed to count table rows for {request.id}: {e}")
@@ -733,15 +723,13 @@ class GooseFSNamespace(LanceNamespace):
             Create table response
         """
         try:
-            from grpc_files.table_master_pb2 import CreateTablePRequest
             grpc_request = CreateTablePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             if request.mode:
                 grpc_request.mode = request.mode
-            if hasattr(request, 'properties') and request.properties:
+            if hasattr(request, "properties") and request.properties:
                 grpc_request.properties.update(request.properties)
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.create_table(grpc_request, request_data)
             if isinstance(result, dict):
                 return CreateTableResponse(**result)
@@ -763,17 +751,18 @@ class GooseFSNamespace(LanceNamespace):
             Create empty table response
         """
         try:
-            from grpc_files.table_master_pb2 import CreateEmptyTablePRequest
             grpc_request = CreateEmptyTablePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             if request.location:
                 grpc_request.location = request.location
-            if hasattr(request, 'properties') and request.properties:
+            if hasattr(request, "properties") and request.properties:
                 grpc_request.properties.update(request.properties)
-            if hasattr(request, 'vend_credentials') and request.vend_credentials is not None:
+            if (
+                hasattr(request, "vend_credentials")
+                and request.vend_credentials is not None
+            ):
                 grpc_request.vend_credentials = request.vend_credentials
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.create_empty_table(grpc_request)
             if isinstance(result, dict):
                 return CreateEmptyTableResponse(**result)
@@ -796,13 +785,11 @@ class GooseFSNamespace(LanceNamespace):
             Insert into table response
         """
         try:
-            from grpc_files.table_master_pb2 import InsertIntoTablePRequest
             grpc_request = InsertIntoTablePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             if request.mode:
                 grpc_request.mode = request.mode
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.insert_into_table(grpc_request, request_data)
             if isinstance(result, dict):
                 return InsertIntoTableResponse(**result)
@@ -825,7 +812,6 @@ class GooseFSNamespace(LanceNamespace):
             Merge insert into table response
         """
         try:
-            from grpc_files.table_master_pb2 import MergeInsertIntoTablePRequest
             grpc_request = MergeInsertIntoTablePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
@@ -833,19 +819,32 @@ class GooseFSNamespace(LanceNamespace):
                 grpc_request.on = request.on
             if request.when_matched_update_all:
                 grpc_request.when_matched_update_all = request.when_matched_update_all
-            if hasattr(request, 'when_matched_update_all_filt') and request.when_matched_update_all_filt:
-                grpc_request.when_matched_update_all_filt = request.when_matched_update_all_filt
+            if (
+                hasattr(request, "when_matched_update_all_filt")
+                and request.when_matched_update_all_filt
+            ):
+                grpc_request.when_matched_update_all_filt = (
+                    request.when_matched_update_all_filt
+                )
             if request.when_not_matched_insert_all:
-                grpc_request.when_not_matched_insert_all = request.when_not_matched_insert_all
+                grpc_request.when_not_matched_insert_all = (
+                    request.when_not_matched_insert_all
+                )
             if request.when_not_matched_by_source_delete:
-                grpc_request.when_not_matched_by_source_delete = request.when_not_matched_by_source_delete
-            if hasattr(request, 'when_not_matched_by_source_delete_filt') and request.when_not_matched_by_source_delete_filt:
-                grpc_request.when_not_matched_by_source_delete_filt = request.when_not_matched_by_source_delete_filt
-            if hasattr(request, 'timeout') and request.timeout:
+                grpc_request.when_not_matched_by_source_delete = (
+                    request.when_not_matched_by_source_delete
+                )
+            if (
+                hasattr(request, "when_not_matched_by_source_delete_filt")
+                and request.when_not_matched_by_source_delete_filt
+            ):
+                grpc_request.when_not_matched_by_source_delete_filt = (
+                    request.when_not_matched_by_source_delete_filt
+                )
+            if hasattr(request, "timeout") and request.timeout:
                 grpc_request.timeout = request.timeout
-            if hasattr(request, 'use_index') and request.use_index is not None:
+            if hasattr(request, "use_index") and request.use_index is not None:
                 grpc_request.use_index = request.use_index
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.merge_insert_into_table(grpc_request, request_data)
             if isinstance(result, dict):
                 return MergeInsertIntoTableResponse(**result)
@@ -865,12 +864,12 @@ class GooseFSNamespace(LanceNamespace):
             Update table response
         """
         try:
-            from grpc_files.table_master_pb2 import UpdateTablePRequest
             grpc_request = UpdateTablePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             if request.updates:
                 import json
+
                 for update in request.updates:
                     if isinstance(update, (list, tuple)):
                         # Each update pair [column, expression] → JSON string
@@ -881,7 +880,6 @@ class GooseFSNamespace(LanceNamespace):
                         grpc_request.updates.append(str(update))
             if request.predicate:
                 grpc_request.predicate = request.predicate
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.update_table(grpc_request)
             if isinstance(result, dict):
                 return UpdateTableResponse(**result)
@@ -903,12 +901,10 @@ class GooseFSNamespace(LanceNamespace):
             Delete from table response
         """
         try:
-            from grpc_files.table_master_pb2 import DeleteFromTablePRequest
             grpc_request = DeleteFromTablePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             grpc_request.predicate = request.predicate
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.delete_from_table(grpc_request)
             if isinstance(result, dict):
                 return DeleteFromTableResponse(**result)
@@ -928,52 +924,71 @@ class GooseFSNamespace(LanceNamespace):
             Query result as bytes (Arrow IPC stream)
         """
         try:
-            from grpc_files.table_master_pb2 import QueryTablePRequest
             grpc_request = QueryTablePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
-            if hasattr(request, 'bypass_vector_index') and request.bypass_vector_index is not None:
+            if (
+                hasattr(request, "bypass_vector_index")
+                and request.bypass_vector_index is not None
+            ):
                 grpc_request.bypass_vector_index = request.bypass_vector_index
             if request.columns:
                 import json
+
                 if isinstance(request.columns, list):
                     grpc_request.columns = json.dumps(request.columns)
-                elif hasattr(request.columns, 'column_names') and request.columns.column_names:
+                elif (
+                    hasattr(request.columns, "column_names")
+                    and request.columns.column_names
+                ):
                     grpc_request.columns = json.dumps(request.columns.column_names)
-                elif hasattr(request.columns, 'model_dump'):
-                    grpc_request.columns = json.dumps(request.columns.model_dump(exclude_none=True))
+                elif hasattr(request.columns, "model_dump"):
+                    grpc_request.columns = json.dumps(
+                        request.columns.model_dump(exclude_none=True)
+                    )
                 else:
                     grpc_request.columns = str(request.columns)
-            if hasattr(request, 'distance_type') and request.distance_type:
+            if hasattr(request, "distance_type") and request.distance_type:
                 grpc_request.distance_type = request.distance_type
-            if hasattr(request, 'ef') and request.ef is not None:
+            if hasattr(request, "ef") and request.ef is not None:
                 grpc_request.ef = request.ef
-            if hasattr(request, 'fast_search') and request.fast_search is not None:
+            if hasattr(request, "fast_search") and request.fast_search is not None:
                 grpc_request.fast_search = request.fast_search
             if request.filter:
                 grpc_request.filter = request.filter
-            if hasattr(request, 'full_text_query') and request.full_text_query:
+            if hasattr(request, "full_text_query") and request.full_text_query:
                 import json
-                grpc_request.full_text_query = json.dumps(request.full_text_query) if isinstance(request.full_text_query, dict) else str(request.full_text_query)
+
+                grpc_request.full_text_query = (
+                    json.dumps(request.full_text_query)
+                    if isinstance(request.full_text_query, dict)
+                    else str(request.full_text_query)
+                )
             if request.k is not None:
                 grpc_request.k = request.k
-            if hasattr(request, 'lower_bound') and request.lower_bound is not None:
+            if hasattr(request, "lower_bound") and request.lower_bound is not None:
                 grpc_request.lower_bound = request.lower_bound
-            if hasattr(request, 'nprobes') and request.nprobes is not None:
+            if hasattr(request, "nprobes") and request.nprobes is not None:
                 grpc_request.nprobes = request.nprobes
-            if hasattr(request, 'offset') and request.offset is not None:
+            if hasattr(request, "offset") and request.offset is not None:
                 grpc_request.offset = request.offset
-            if hasattr(request, 'prefilter') and request.prefilter is not None:
+            if hasattr(request, "prefilter") and request.prefilter is not None:
                 grpc_request.prefilter = request.prefilter
-            if hasattr(request, 'refine_factor') and request.refine_factor is not None:
+            if hasattr(request, "refine_factor") and request.refine_factor is not None:
                 grpc_request.refine_factor = request.refine_factor
-            if hasattr(request, 'upper_bound') and request.upper_bound is not None:
+            if hasattr(request, "upper_bound") and request.upper_bound is not None:
                 grpc_request.upper_bound = request.upper_bound
             if request.vector:
                 # request.vector may be a QueryTableRequestVector pydantic model
-                if hasattr(request.vector, 'single_vector') and request.vector.single_vector:
+                if (
+                    hasattr(request.vector, "single_vector")
+                    and request.vector.single_vector
+                ):
                     grpc_request.vector.extend(request.vector.single_vector)
-                elif hasattr(request.vector, 'multi_vector') and request.vector.multi_vector:
+                elif (
+                    hasattr(request.vector, "multi_vector")
+                    and request.vector.multi_vector
+                ):
                     # Flatten multi_vector for gRPC repeated float field
                     for vec in request.vector.multi_vector:
                         grpc_request.vector.extend(vec)
@@ -981,13 +996,12 @@ class GooseFSNamespace(LanceNamespace):
                     grpc_request.vector.extend(request.vector)
                 else:
                     logger.warning(f"Unsupported vector type: {type(request.vector)}")
-            if hasattr(request, 'vector_column') and request.vector_column:
+            if hasattr(request, "vector_column") and request.vector_column:
                 grpc_request.vector_column = request.vector_column
-            if hasattr(request, 'version') and request.version is not None:
+            if hasattr(request, "version") and request.version is not None:
                 grpc_request.version = request.version
-            if hasattr(request, 'with_row_id') and request.with_row_id is not None:
+            if hasattr(request, "with_row_id") and request.with_row_id is not None:
                 grpc_request.with_row_id = request.with_row_id
-            grpc_request.catalog = LANCE_CATALOG
             return self.client.query_table(grpc_request)
         except Exception as e:
             logger.error(f"Failed to query table {request.id}: {e}")
@@ -1006,7 +1020,6 @@ class GooseFSNamespace(LanceNamespace):
             Create table index response
         """
         try:
-            from grpc_files.table_master_pb2 import CreateTableIndexPRequest
             grpc_request = CreateTableIndexPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
@@ -1018,23 +1031,28 @@ class GooseFSNamespace(LanceNamespace):
                 grpc_request.name = request.name
             if request.distance_type:
                 grpc_request.distance_type = request.distance_type
-            if hasattr(request, 'with_position') and request.with_position is not None:
+            if hasattr(request, "with_position") and request.with_position is not None:
                 grpc_request.with_position = request.with_position
-            if hasattr(request, 'base_tokenizer') and request.base_tokenizer:
+            if hasattr(request, "base_tokenizer") and request.base_tokenizer:
                 grpc_request.base_tokenizer = request.base_tokenizer
-            if hasattr(request, 'language') and request.language:
+            if hasattr(request, "language") and request.language:
                 grpc_request.language = request.language
-            if hasattr(request, 'max_token_length') and request.max_token_length is not None:
+            if (
+                hasattr(request, "max_token_length")
+                and request.max_token_length is not None
+            ):
                 grpc_request.max_token_length = request.max_token_length
-            if hasattr(request, 'lower_case') and request.lower_case is not None:
+            if hasattr(request, "lower_case") and request.lower_case is not None:
                 grpc_request.lower_case = request.lower_case
-            if hasattr(request, 'stem') and request.stem is not None:
+            if hasattr(request, "stem") and request.stem is not None:
                 grpc_request.stem = request.stem
-            if hasattr(request, 'remove_stop_words') and request.remove_stop_words is not None:
+            if (
+                hasattr(request, "remove_stop_words")
+                and request.remove_stop_words is not None
+            ):
                 grpc_request.remove_stop_words = request.remove_stop_words
-            if hasattr(request, 'ascii_folding') and request.ascii_folding is not None:
+            if hasattr(request, "ascii_folding") and request.ascii_folding is not None:
                 grpc_request.ascii_folding = request.ascii_folding
-            grpc_request.catalog = LANCE_CATALOG
             self.client.create_table_index(grpc_request)
             return CreateTableIndexResponse()
         except Exception as e:
@@ -1054,7 +1072,6 @@ class GooseFSNamespace(LanceNamespace):
             Create table scalar index response
         """
         try:
-            from grpc_files.table_master_pb2 import CreateTableScalarIndexPRequest
             grpc_request = CreateTableScalarIndexPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
@@ -1062,7 +1079,6 @@ class GooseFSNamespace(LanceNamespace):
                 grpc_request.columns.append(request.column)
             if request.index_type:
                 grpc_request.index_type = request.index_type
-            grpc_request.catalog = LANCE_CATALOG
             self.client.create_table_scalar_index(grpc_request)
             return CreateTableScalarIndexResponse()
         except Exception as e:
@@ -1082,7 +1098,6 @@ class GooseFSNamespace(LanceNamespace):
             List table indices response
         """
         try:
-            from grpc_files.table_master_pb2 import ListTableIndicesPRequest
             grpc_request = ListTableIndicesPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
@@ -1092,10 +1107,17 @@ class GooseFSNamespace(LanceNamespace):
                 grpc_request.limit = request.limit
             if request.version is not None:
                 grpc_request.version = request.version
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.list_table_indices(grpc_request)
             if isinstance(result, dict):
-                return ListTableIndicesResponse(**result)
+                # GoosefsMetastoreClient returns {"indices": [...], ...} but
+                # the Lance model field is named `indexes`.
+                indexes = result.get("indexes")
+                if indexes is None:
+                    indexes = result.get("indices", [])
+                response_kwargs = {"indexes": indexes}
+                if "page_token" in result:
+                    response_kwargs["page_token"] = result["page_token"]
+                return ListTableIndicesResponse(**response_kwargs)
             return ListTableIndicesResponse(indexes=[])
         except Exception as e:
             logger.error(f"Failed to list table indices for {request.id}: {e}")
@@ -1114,7 +1136,6 @@ class GooseFSNamespace(LanceNamespace):
             Describe table index stats response
         """
         try:
-            from grpc_files.table_master_pb2 import DescribeTableIndexStatsPRequest
             grpc_request = DescribeTableIndexStatsPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
@@ -1122,7 +1143,6 @@ class GooseFSNamespace(LanceNamespace):
                 grpc_request.index_name = request.index_name
             if request.version is not None:
                 grpc_request.version = request.version
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.describe_table_index_stats(grpc_request)
             if isinstance(result, dict):
                 return DescribeTableIndexStatsResponse(**result)
@@ -1144,13 +1164,11 @@ class GooseFSNamespace(LanceNamespace):
             Drop table index response
         """
         try:
-            from grpc_files.table_master_pb2 import DropTableIndexPRequest
             grpc_request = DropTableIndexPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             if request.index_name:
                 grpc_request.index_name = request.index_name
-            grpc_request.catalog = LANCE_CATALOG
             self.client.drop_table_index(grpc_request)
             return DropTableIndexResponse()
         except Exception as e:
@@ -1168,13 +1186,11 @@ class GooseFSNamespace(LanceNamespace):
             List tables response
         """
         try:
-            from grpc_files.table_master_pb2 import ListAllTablesPRequest
             grpc_request = ListAllTablesPRequest()
             if request.page_token:
                 grpc_request.page_token = request.page_token
             if request.limit is not None:
                 grpc_request.limit = request.limit
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.list_all_tables(grpc_request)
             if isinstance(result, dict):
                 return ListTablesResponse(**result)
@@ -1183,9 +1199,7 @@ class GooseFSNamespace(LanceNamespace):
             logger.error(f"Failed to list all tables: {e}")
             raise
 
-    def restore_table(
-        self, request: RestoreTableRequest
-    ) -> RestoreTableResponse:
+    def restore_table(self, request: RestoreTableRequest) -> RestoreTableResponse:
         """
         Restore a table to a specific version.
 
@@ -1196,21 +1210,17 @@ class GooseFSNamespace(LanceNamespace):
             Restore table response
         """
         try:
-            from grpc_files.table_master_pb2 import RestoreTablePRequest
             grpc_request = RestoreTablePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             grpc_request.version = request.version
-            grpc_request.catalog = LANCE_CATALOG
             self.client.restore_table(grpc_request)
             return RestoreTableResponse()
         except Exception as e:
             logger.error(f"Failed to restore table {request.id}: {e}")
             raise
 
-    def rename_table(
-        self, request: RenameTableRequest
-    ) -> RenameTableResponse:
+    def rename_table(self, request: RenameTableRequest) -> RenameTableResponse:
         """
         Rename a table.
 
@@ -1221,14 +1231,12 @@ class GooseFSNamespace(LanceNamespace):
             Rename table response
         """
         try:
-            from grpc_files.table_master_pb2 import RenameTablePRequest
             grpc_request = RenameTablePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             grpc_request.new_table_name = request.new_table_name
             if request.new_namespace_id:
                 grpc_request.new_namespace_id.extend(request.new_namespace_id)
-            grpc_request.catalog = LANCE_CATALOG
             self.client.rename_table(grpc_request)
             return RenameTableResponse()
         except Exception as e:
@@ -1248,7 +1256,6 @@ class GooseFSNamespace(LanceNamespace):
             List table versions response
         """
         try:
-            from grpc_files.table_master_pb2 import ListTableVersionsPRequest
             grpc_request = ListTableVersionsPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
@@ -1256,9 +1263,8 @@ class GooseFSNamespace(LanceNamespace):
                 grpc_request.page_token = request.page_token
             if request.limit is not None:
                 grpc_request.limit = request.limit
-            if hasattr(request, 'descending') and request.descending is not None:
+            if hasattr(request, "descending") and request.descending is not None:
                 grpc_request.descending = request.descending
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.list_table_versions(grpc_request)
             if isinstance(result, dict):
                 return ListTableVersionsResponse(**result)
@@ -1283,24 +1289,26 @@ class GooseFSNamespace(LanceNamespace):
             Create table version response
         """
         try:
-            from grpc_files.table_master_pb2 import CreateTableVersionPRequest
             grpc_request = CreateTableVersionPRequest()
             grpc_request.id.extend(request.id)
             if request.version is not None:
                 grpc_request.version = request.version
             if request.manifest_path is not None:
                 grpc_request.manifest_path = request.manifest_path
-            if hasattr(request, 'manifest_size') and request.manifest_size is not None:
+            if hasattr(request, "manifest_size") and request.manifest_size is not None:
                 grpc_request.manifest_size = request.manifest_size
-            if hasattr(request, 'e_tag') and request.e_tag is not None:
+            if hasattr(request, "e_tag") and request.e_tag is not None:
                 grpc_request.e_tag = request.e_tag
-            if hasattr(request, 'metadata') and request.metadata:
+            if hasattr(request, "metadata") and request.metadata:
                 grpc_request.metadata.update(request.metadata)
-            if hasattr(request, 'naming_scheme') and request.naming_scheme is not None:
+            if hasattr(request, "naming_scheme") and request.naming_scheme is not None:
                 grpc_request.naming_scheme = request.naming_scheme
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.create_table_version(grpc_request)
-            return CreateTableVersionResponse(**result) if isinstance(result, dict) else result
+            return (
+                CreateTableVersionResponse(**result)
+                if isinstance(result, dict)
+                else result
+            )
         except Exception as e:
             logger.error(f"Failed to create table version for {request.id}: {e}")
             raise
@@ -1320,14 +1328,16 @@ class GooseFSNamespace(LanceNamespace):
             Describe table version response
         """
         try:
-            from grpc_files.table_master_pb2 import DescribeTableVersionPRequest
             grpc_request = DescribeTableVersionPRequest()
             grpc_request.id.extend(request.id)
             if request.version is not None:
                 grpc_request.version = request.version
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.describe_table_version(grpc_request)
-            return DescribeTableVersionResponse(**result) if isinstance(result, dict) else result
+            return (
+                DescribeTableVersionResponse(**result)
+                if isinstance(result, dict)
+                else result
+            )
         except Exception as e:
             logger.error(f"Failed to describe table version for {request.id}: {e}")
             raise
@@ -1347,17 +1357,16 @@ class GooseFSNamespace(LanceNamespace):
             Batch delete table versions response
         """
         try:
-            from grpc_files.table_master_pb2 import BatchDeleteTableVersionsPRequest, VersionRange
             grpc_request = BatchDeleteTableVersionsPRequest()
             grpc_request.id.extend(request.id)
             if request.versions is not None:
                 for v in request.versions:
                     if isinstance(v, dict):
                         vr = VersionRange()
-                        if 'start_version' in v:
-                            vr.start_version = v['start_version']
-                        if 'end_version' in v:
-                            vr.end_version = v['end_version']
+                        if "start_version" in v:
+                            vr.start_version = v["start_version"]
+                        if "end_version" in v:
+                            vr.end_version = v["end_version"]
                         grpc_request.ranges.append(vr)
                     else:
                         # Treat as single version: create a range [v, v+1)
@@ -1365,9 +1374,12 @@ class GooseFSNamespace(LanceNamespace):
                         vr.start_version = v
                         vr.end_version = v + 1
                         grpc_request.ranges.append(vr)
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.batch_delete_table_versions(grpc_request)
-            return BatchDeleteTableVersionsResponse(**result) if isinstance(result, dict) else result
+            return (
+                BatchDeleteTableVersionsResponse(**result)
+                if isinstance(result, dict)
+                else result
+            )
         except Exception as e:
             logger.error(f"Failed to batch delete table versions for {request.id}: {e}")
             raise
@@ -1385,24 +1397,22 @@ class GooseFSNamespace(LanceNamespace):
             Update table schema metadata response
         """
         try:
-            from grpc_files.table_master_pb2 import UpdateTableSchemaMetadataPRequest
             grpc_request = UpdateTableSchemaMetadataPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             if request.metadata:
                 grpc_request.metadata.update(request.metadata)
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.update_table_schema_metadata(grpc_request)
             if isinstance(result, dict):
                 return UpdateTableSchemaMetadataResponse(**result)
             return UpdateTableSchemaMetadataResponse()
         except Exception as e:
-            logger.error(f"Failed to update table schema metadata for {request.id}: {e}")
+            logger.error(
+                f"Failed to update table schema metadata for {request.id}: {e}"
+            )
             raise
 
-    def get_table_stats(
-        self, request: GetTableStatsRequest
-    ) -> GetTableStatsResponse:
+    def get_table_stats(self, request: GetTableStatsRequest) -> GetTableStatsResponse:
         """
         Get table statistics.
 
@@ -1413,22 +1423,16 @@ class GooseFSNamespace(LanceNamespace):
             Get table stats response
         """
         try:
-            from grpc_files.table_master_pb2 import GetTableStatsPRequest
             grpc_request = GetTableStatsPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.get_table_stats(grpc_request)
-            if isinstance(result, dict):
-                return GetTableStatsResponse(**result)
-            return result
+            return GetTableStatsResponse(**result)
         except Exception as e:
             logger.error(f"Failed to get table stats for {request.id}: {e}")
             raise
 
-    def explain_table_query_plan(
-        self, request: ExplainTableQueryPlanRequest
-    ) -> str:
+    def explain_table_query_plan(self, request: ExplainTableQueryPlanRequest) -> str:
         """
         Explain a table query plan.
 
@@ -1439,7 +1443,6 @@ class GooseFSNamespace(LanceNamespace):
             Query plan explanation string
         """
         try:
-            from grpc_files.table_master_pb2 import ExplainTableQueryPlanPRequest
             grpc_request = ExplainTableQueryPlanPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
@@ -1447,15 +1450,12 @@ class GooseFSNamespace(LanceNamespace):
                 grpc_request.query = request.query
             if request.verbose is not None:
                 grpc_request.verbose = request.verbose
-            grpc_request.catalog = LANCE_CATALOG
             return self.client.explain_table_query_plan(grpc_request)
         except Exception as e:
             logger.error(f"Failed to explain query plan for {request.id}: {e}")
             raise
 
-    def analyze_table_query_plan(
-        self, request: AnalyzeTableQueryPlanRequest
-    ) -> str:
+    def analyze_table_query_plan(self, request: AnalyzeTableQueryPlanRequest) -> str:
         """
         Analyze a table query plan.
 
@@ -1466,13 +1466,11 @@ class GooseFSNamespace(LanceNamespace):
             Query plan analysis string
         """
         try:
-            from grpc_files.table_master_pb2 import AnalyzeTableQueryPlanPRequest
             grpc_request = AnalyzeTableQueryPlanPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             if request.filter:
-                grpc_request.query = request.filter
-            grpc_request.catalog = LANCE_CATALOG
+                grpc_request.filter = request.filter
             return self.client.analyze_table_query_plan(grpc_request)
         except Exception as e:
             logger.error(f"Failed to analyze query plan for {request.id}: {e}")
@@ -1491,7 +1489,6 @@ class GooseFSNamespace(LanceNamespace):
             Alter table add columns response
         """
         try:
-            from grpc_files.table_master_pb2 import AlterTableAddColumnsPRequest, NewColumnTransform
             grpc_request = AlterTableAddColumnsPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
@@ -1503,7 +1500,6 @@ class GooseFSNamespace(LanceNamespace):
                     if col.expression:
                         new_col.expression = col.expression
                     grpc_request.columns.append(new_col)
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.alter_table_add_columns(grpc_request)
             if isinstance(result, dict):
                 return AlterTableAddColumnsResponse(**result)
@@ -1525,7 +1521,6 @@ class GooseFSNamespace(LanceNamespace):
             Alter table alter columns response
         """
         try:
-            from grpc_files.table_master_pb2 import AlterTableAlterColumnsPRequest, AlterColumnsEntry
             grpc_request = AlterTableAlterColumnsPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
@@ -1536,13 +1531,17 @@ class GooseFSNamespace(LanceNamespace):
                         entry.path = alt.path
                     if alt.data_type:
                         import json
-                        entry.data_type = json.dumps(alt.data_type) if isinstance(alt.data_type, dict) else str(alt.data_type)
+
+                        entry.data_type = (
+                            json.dumps(alt.data_type)
+                            if isinstance(alt.data_type, dict)
+                            else str(alt.data_type)
+                        )
                     if alt.rename:
                         entry.rename = alt.rename
                     if alt.nullable is not None:
                         entry.nullable = alt.nullable
                     grpc_request.columns.append(entry)
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.alter_table_alter_columns(grpc_request)
             if isinstance(result, dict):
                 return AlterTableAlterColumnsResponse(**result)
@@ -1564,13 +1563,11 @@ class GooseFSNamespace(LanceNamespace):
             Alter table drop columns response
         """
         try:
-            from grpc_files.table_master_pb2 import AlterTableDropColumnsPRequest
             grpc_request = AlterTableDropColumnsPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             if request.columns:
                 grpc_request.columns.extend(request.columns)
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.alter_table_drop_columns(grpc_request)
             if isinstance(result, dict):
                 return AlterTableDropColumnsResponse(**result)
@@ -1579,9 +1576,7 @@ class GooseFSNamespace(LanceNamespace):
             logger.error(f"Failed to drop columns from table {request.id}: {e}")
             raise
 
-    def list_table_tags(
-        self, request: ListTableTagsRequest
-    ) -> ListTableTagsResponse:
+    def list_table_tags(self, request: ListTableTagsRequest) -> ListTableTagsResponse:
         """
         List all tags for a table.
 
@@ -1592,7 +1587,6 @@ class GooseFSNamespace(LanceNamespace):
             List table tags response
         """
         try:
-            from grpc_files.table_master_pb2 import ListTableTagsPRequest
             grpc_request = ListTableTagsPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
@@ -1600,7 +1594,6 @@ class GooseFSNamespace(LanceNamespace):
                 grpc_request.page_token = request.page_token
             if request.limit is not None:
                 grpc_request.limit = request.limit
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.list_table_tags(grpc_request)
             if isinstance(result, dict):
                 return ListTableTagsResponse(**result)
@@ -1622,12 +1615,10 @@ class GooseFSNamespace(LanceNamespace):
             Get table tag version response
         """
         try:
-            from grpc_files.table_master_pb2 import GetTableTagVersionPRequest
             grpc_request = GetTableTagVersionPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             grpc_request.tag = request.tag
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.get_table_tag_version(grpc_request)
             if isinstance(result, int):
                 return GetTableTagVersionResponse(version=result)
@@ -1651,13 +1642,11 @@ class GooseFSNamespace(LanceNamespace):
             Create table tag response
         """
         try:
-            from grpc_files.table_master_pb2 import CreateTableTagPRequest
             grpc_request = CreateTableTagPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             grpc_request.tag = request.tag
             grpc_request.version = request.version
-            grpc_request.catalog = LANCE_CATALOG
             self.client.create_table_tag(grpc_request)
             return CreateTableTagResponse()
         except Exception as e:
@@ -1677,12 +1666,10 @@ class GooseFSNamespace(LanceNamespace):
             Delete table tag response
         """
         try:
-            from grpc_files.table_master_pb2 import DeleteTableTagPRequest
             grpc_request = DeleteTableTagPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             grpc_request.tag = request.tag
-            grpc_request.catalog = LANCE_CATALOG
             self.client.delete_table_tag(grpc_request)
             return DeleteTableTagResponse()
         except Exception as e:
@@ -1702,13 +1689,11 @@ class GooseFSNamespace(LanceNamespace):
             Update table tag response
         """
         try:
-            from grpc_files.table_master_pb2 import UpdateTableTagPRequest
             grpc_request = UpdateTableTagPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
             grpc_request.tag = request.tag
             grpc_request.version = request.version
-            grpc_request.catalog = LANCE_CATALOG
             self.client.update_table_tag(grpc_request)
             return UpdateTableTagResponse()
         except Exception as e:
@@ -1728,15 +1713,11 @@ class GooseFSNamespace(LanceNamespace):
             Describe transaction response
         """
         try:
-            from grpc_files.table_master_pb2 import DescribeTransactionPRequest
             grpc_request = DescribeTransactionPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.describe_transaction(grpc_request)
-            if isinstance(result, dict):
-                return DescribeTransactionResponse(**result)
-            return result
+            return DescribeTransactionResponse(**result)
         except Exception as e:
             logger.error(f"Failed to describe transaction {request.id}: {e}")
             raise
@@ -1754,7 +1735,6 @@ class GooseFSNamespace(LanceNamespace):
             Alter transaction response
         """
         try:
-            from grpc_files.table_master_pb2 import AlterTransactionPRequest, AlterTransactionAction, AlterTransactionSetStatus, AlterTransactionSetProperty, AlterTransactionUnsetProperty
             grpc_request = AlterTransactionPRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
@@ -1783,11 +1763,8 @@ class GooseFSNamespace(LanceNamespace):
                             unset_prop.mode = action.unset_property_action.mode
                         grpc_action.unset_property_action.CopyFrom(unset_prop)
                     grpc_request.actions.append(grpc_action)
-            grpc_request.catalog = LANCE_CATALOG
             result = self.client.alter_transaction(grpc_request)
-            if isinstance(result, dict):
-                return AlterTransactionResponse(**result)
-            return result
+            return AlterTransactionResponse(**result)
         except Exception as e:
             logger.error(f"Failed to alter transaction {request.id}: {e}")
             raise
@@ -1808,10 +1785,6 @@ class GooseFSNamespace(LanceNamespace):
             Batch create table versions response with transaction_id and versions
         """
         try:
-            from grpc_files.table_master_pb2 import (
-                BatchCreateTableVersionsPRequest,
-                CreateTableVersionEntry as GrpcCreateTableVersionEntry,
-            )
             grpc_request = BatchCreateTableVersionsPRequest()
             for entry in request.entries:
                 grpc_entry = grpc_request.entries.add()
@@ -1820,17 +1793,20 @@ class GooseFSNamespace(LanceNamespace):
                     grpc_entry.version = entry.version
                 if entry.manifest_path is not None:
                     grpc_entry.manifest_path = entry.manifest_path
-                if hasattr(entry, 'manifest_size') and entry.manifest_size is not None:
+                if hasattr(entry, "manifest_size") and entry.manifest_size is not None:
                     grpc_entry.manifest_size = entry.manifest_size
-                if hasattr(entry, 'e_tag') and entry.e_tag is not None:
+                if hasattr(entry, "e_tag") and entry.e_tag is not None:
                     grpc_entry.e_tag = entry.e_tag
-                if hasattr(entry, 'metadata') and entry.metadata:
+                if hasattr(entry, "metadata") and entry.metadata:
                     grpc_entry.metadata.update(entry.metadata)
-                if hasattr(entry, 'naming_scheme') and entry.naming_scheme is not None:
+                if hasattr(entry, "naming_scheme") and entry.naming_scheme is not None:
                     grpc_entry.naming_scheme = entry.naming_scheme
-            grpc_request.catalog = "lance"
             result = self.client.batch_create_table_versions(grpc_request)
-            return BatchCreateTableVersionsResponse(**result) if isinstance(result, dict) else result
+            return (
+                BatchCreateTableVersionsResponse(**result)
+                if isinstance(result, dict)
+                else result
+            )
         except Exception as e:
             logger.error(f"Failed to batch create table versions: {e}")
             raise
@@ -1853,15 +1829,6 @@ class GooseFSNamespace(LanceNamespace):
             Batch commit tables response with transaction_id and results
         """
         try:
-            from grpc_files.table_master_pb2 import (
-                BatchCommitTablesPRequest,
-                CommitTableOperation as GrpcCommitTableOperation,
-                DeclareTablePRequest,
-                CreateTableVersionPRequest,
-                BatchDeleteTableVersionsPRequest,
-                DeregisterTablePRequest,
-                VersionRange,
-            )
             grpc_request = BatchCommitTablesPRequest()
             for op in request.operations:
                 grpc_op = grpc_request.operations.add()
@@ -1870,7 +1837,10 @@ class GooseFSNamespace(LanceNamespace):
                     dt_req.id.extend(op.declare_table.id)
                     if op.declare_table.location is not None:
                         dt_req.location = op.declare_table.location
-                    if hasattr(op.declare_table, 'properties') and op.declare_table.properties:
+                    if (
+                        hasattr(op.declare_table, "properties")
+                        and op.declare_table.properties
+                    ):
                         dt_req.properties.update(op.declare_table.properties)
                     grpc_op.declare_table.CopyFrom(dt_req)
                 if op.create_table_version is not None:
@@ -1880,26 +1850,41 @@ class GooseFSNamespace(LanceNamespace):
                         ctv_req.version = op.create_table_version.version
                     if op.create_table_version.manifest_path is not None:
                         ctv_req.manifest_path = op.create_table_version.manifest_path
-                    if hasattr(op.create_table_version, 'manifest_size') and op.create_table_version.manifest_size is not None:
+                    if (
+                        hasattr(op.create_table_version, "manifest_size")
+                        and op.create_table_version.manifest_size is not None
+                    ):
                         ctv_req.manifest_size = op.create_table_version.manifest_size
-                    if hasattr(op.create_table_version, 'e_tag') and op.create_table_version.e_tag is not None:
+                    if (
+                        hasattr(op.create_table_version, "e_tag")
+                        and op.create_table_version.e_tag is not None
+                    ):
                         ctv_req.e_tag = op.create_table_version.e_tag
-                    if hasattr(op.create_table_version, 'metadata') and op.create_table_version.metadata:
+                    if (
+                        hasattr(op.create_table_version, "metadata")
+                        and op.create_table_version.metadata
+                    ):
                         ctv_req.metadata.update(op.create_table_version.metadata)
-                    if hasattr(op.create_table_version, 'naming_scheme') and op.create_table_version.naming_scheme is not None:
+                    if (
+                        hasattr(op.create_table_version, "naming_scheme")
+                        and op.create_table_version.naming_scheme is not None
+                    ):
                         ctv_req.naming_scheme = op.create_table_version.naming_scheme
                     grpc_op.create_table_version.CopyFrom(ctv_req)
                 if op.delete_table_versions is not None:
                     dtv_req = BatchDeleteTableVersionsPRequest()
                     dtv_req.id.extend(op.delete_table_versions.id)
-                    if hasattr(op.delete_table_versions, 'versions') and op.delete_table_versions.versions is not None:
+                    if (
+                        hasattr(op.delete_table_versions, "versions")
+                        and op.delete_table_versions.versions is not None
+                    ):
                         for v in op.delete_table_versions.versions:
                             if isinstance(v, dict):
                                 vr = VersionRange()
-                                if 'start_version' in v:
-                                    vr.start_version = v['start_version']
-                                if 'end_version' in v:
-                                    vr.end_version = v['end_version']
+                                if "start_version" in v:
+                                    vr.start_version = v["start_version"]
+                                if "end_version" in v:
+                                    vr.end_version = v["end_version"]
                                 dtv_req.ranges.append(vr)
                             else:
                                 vr = VersionRange()
@@ -1911,9 +1896,12 @@ class GooseFSNamespace(LanceNamespace):
                     drt_req = DeregisterTablePRequest()
                     drt_req.id.extend(op.deregister_table.id)
                     grpc_op.deregister_table.CopyFrom(drt_req)
-            grpc_request.catalog = "lance"
             result = self.client.batch_commit_tables(grpc_request)
-            return BatchCommitTablesResponse(**result) if isinstance(result, dict) else result
+            return (
+                BatchCommitTablesResponse(**result)
+                if isinstance(result, dict)
+                else result
+            )
         except Exception as e:
             logger.error(f"Failed to batch commit tables: {e}")
             raise
