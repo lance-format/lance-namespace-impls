@@ -38,6 +38,7 @@ import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
+import org.lance.namespace.model.NamespaceExistsRequest;
 import org.lance.namespace.model.TableExistsRequest;
 import org.lance.namespace.util.LanceTableUtil;
 
@@ -146,6 +147,15 @@ public class GlueNamespace implements LanceNamespace, Closeable {
   }
 
   @Override
+  public void namespaceExists(NamespaceExistsRequest request) {
+    String namespaceName = namespaceFromId(request.getId());
+    if (!databaseExists(namespaceName)) {
+      throw new NamespaceNotFoundException(
+          "Namespace not found: " + namespaceName, "NAMESPACE_NOT_FOUND", namespaceName);
+    }
+  }
+
+  @Override
   public CreateNamespaceResponse createNamespace(CreateNamespaceRequest request) {
     String namespaceName = namespaceFromId(request.getId());
 
@@ -233,7 +243,7 @@ public class GlueNamespace implements LanceNamespace, Closeable {
       } while (glueNextToken != null && remaining > 0);
       return new ListTablesResponse().tables(tables).pageToken(glueNextToken);
     } catch (EntityNotFoundException e) {
-      throw GlueToLanceErrorConverter.notFound(e, "Glue database not found: %s", namespaceName);
+      throw GlueToLanceErrorConverter.namespaceNotFound(e, "Glue database not found: %s", namespaceName);
     } catch (GlueException e) {
       throw GlueToLanceErrorConverter.serverError(
           e, "Failed to list tables in Glue database: %s", namespaceName);
@@ -466,7 +476,7 @@ public class GlueNamespace implements LanceNamespace, Closeable {
                   .build())
           .database();
     } catch (EntityNotFoundException e) {
-      throw GlueToLanceErrorConverter.notFound(e, "Glue database not found: %s", namespaceName);
+      throw GlueToLanceErrorConverter.namespaceNotFound(e, "Glue database not found: %s", namespaceName);
     } catch (GlueException e) {
       throw GlueToLanceErrorConverter.serverError(
           e, "Failed to get Glue database: %s", namespaceName);

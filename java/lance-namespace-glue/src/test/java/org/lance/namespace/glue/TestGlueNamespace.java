@@ -30,6 +30,7 @@ import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
+import org.lance.namespace.model.NamespaceExistsRequest;
 import org.lance.namespace.model.TableExistsRequest;
 
 import com.google.common.collect.ImmutableList;
@@ -185,6 +186,30 @@ public class TestGlueNamespace {
     DescribeNamespaceResponse response = glueNamespace.describeNamespace(request);
 
     assertEquals(response.getProperties(), parameters);
+  }
+
+  @Test
+  public void testNamespaceExistsWhenDatabasePresent() {
+    String namespaceName = "db1";
+    when(glue.getDatabase(any(GetDatabaseRequest.class)))
+        .thenReturn(
+            GetDatabaseResponse.builder()
+                .database(Database.builder().name(namespaceName).build())
+                .build());
+
+    glueNamespace.namespaceExists(new NamespaceExistsRequest().id(ImmutableList.of(namespaceName)));
+
+    verify(glue).getDatabase(any(GetDatabaseRequest.class));
+  }
+
+  @Test
+  public void testNamespaceExistsWhenDatabaseMissing() {
+    when(glue.getDatabase(any(GetDatabaseRequest.class)))
+        .thenThrow(EntityNotFoundException.builder().build());
+
+    assertThrows(
+        LanceNamespaceException.class,
+        () -> glueNamespace.namespaceExists(new NamespaceExistsRequest().id(ImmutableList.of("missing"))));
   }
 
   @Test
