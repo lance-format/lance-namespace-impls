@@ -38,6 +38,7 @@ import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
+import org.lance.namespace.model.NamespaceExistsRequest;
 import org.lance.namespace.model.TableExistsRequest;
 import org.lance.namespace.util.LanceTableUtil;
 
@@ -143,6 +144,15 @@ public class GlueNamespace implements LanceNamespace, Closeable {
     Database database = getDatabase(namespaceName);
     Map<String, String> glueProperties = extractDatabaseProperties(database);
     return new DescribeNamespaceResponse().properties(glueProperties);
+  }
+
+  @Override
+  public void namespaceExists(NamespaceExistsRequest request) {
+    String namespaceName = namespaceFromId(request.getId());
+    if (!databaseExists(namespaceName)) {
+      throw new NamespaceNotFoundException(
+          "Namespace not found: " + namespaceName, "NAMESPACE_NOT_FOUND", namespaceName);
+    }
   }
 
   @Override
