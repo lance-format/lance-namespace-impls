@@ -48,8 +48,6 @@ from lance_namespace_urllib3_client.models import (
     AlterTransactionResponse,
     AnalyzeTableQueryPlanRequest,
     CountTableRowsRequest,
-    CreateEmptyTableRequest,
-    CreateEmptyTableResponse,
     CreateNamespaceRequest,
     CreateNamespaceResponse,
     CreateTableIndexRequest,
@@ -116,6 +114,25 @@ from lance_namespace_urllib3_client.models import (
     UpdateTableTagRequest,
     UpdateTableTagResponse,
 )
+
+# `CreateEmptyTableRequest` / `CreateEmptyTableResponse` were merged into
+# `CreateTableRequest` / `CreateTableResponse` upstream in lance-namespace
+# >= 0.8 (the OpenAPI spec was consolidated). The new models are strict
+# supersets of the old ones — they add `mode`, `transaction_id`, `version`,
+# etc. while keeping `id`, `location`, `properties`, `storage_options`.
+# Alias the old names locally so the rest of this module (and any external
+# caller that still imports the old names from here) keeps working without
+# pinning a specific upstream version.
+try:
+    from lance_namespace_urllib3_client.models import (  # type: ignore[attr-defined]
+        CreateEmptyTableRequest,
+        CreateEmptyTableResponse,
+    )
+except ImportError:  # pragma: no cover - exercised only on newer clients
+    from lance_namespace_urllib3_client.models import (
+        CreateTableRequest as CreateEmptyTableRequest,
+        CreateTableResponse as CreateEmptyTableResponse,
+    )
 
 # The following models may not exist in older versions of lance_namespace_urllib3_client,
 # so we use try/except for conditional imports
@@ -282,6 +299,15 @@ class GooseFSNamespace(LanceNamespace):
                 (default: False)
             username: Username for authentication (optional)
             impersonation_user: Optional user to impersonate
+            managed_versioning: If True, advertise this namespace as the
+                authoritative version manager for Lance tables. When set,
+                ``declare_table`` and ``describe_table`` responses will
+                carry ``managed_versioning=True`` so that Lance's write/read
+                APIs route commits through this namespace's
+                ``create_table_version`` / ``describe_table_version`` /
+                ``list_table_versions`` instead of the default object-store
+                CommitHandler. Accepts bool or string "true"/"false".
+                Defaults to False to preserve legacy behavior.
             **properties: Additional configuration properties
         """
         if not GOOSEFS_CLIENT_AVAILABLE:
@@ -307,6 +333,19 @@ class GooseFSNamespace(LanceNamespace):
             self.authentication_enabled = bool(auth_enabled)
         self.username = properties.get("username")
         self.impersonation_user = properties.get("impersonation_user")
+
+        # Whether this namespace acts as the Lance manifest catalog for the
+        # tables it manages. When True, declare_table/describe_table will
+        # advertise managed_versioning=True so that lance.write_dataset /
+        # lance.dataset attach a LanceNamespaceExternalManifestStore-backed
+        # commit handler and route every commit through this namespace's
+        # create_table_version API. See lance/python/python/lance/dataset.py
+        # `write_dataset` namespace branch for the consumer side.
+        managed_versioning = properties.get("managed_versioning", False)
+        if isinstance(managed_versioning, str):
+            self.managed_versioning = managed_versioning.lower() == "true"
+        else:
+            self.managed_versioning = bool(managed_versioning)
 
         # Properties that describe how *created* namespaces should be
         # configured (rather than how the client connects). They are pulled
@@ -519,8 +558,18 @@ class GooseFSNamespace(LanceNamespace):
                 grpc_request.vend_credentials = request.vend_credentials
             result = self.client.describe_table(grpc_request)
             if isinstance(result, dict):
-                return DescribeTableResponse(**result)
-            return DescribeTableResponse()
+                response = DescribeTableResponse(**result)
+            else:
+                response = DescribeTableResponse()
+            # Advertise managed_versioning so that Lance attaches the
+            # external manifest commit handler that routes commits through
+            # this namespace's create_table_version API. We unconditionally
+            # overwrite here because GooseFS Table Master does not know
+            # about Lance's managed_versioning concept; this is a
+            # client-side deployment decision.
+            if self.managed_versioning:
+                response.managed_versioning = True
+            return response
 
         except Exception as e:
             if "not found" in str(e).lower():
@@ -553,8 +602,15 @@ class GooseFSNamespace(LanceNamespace):
                 grpc_request.vend_credentials = request.vend_credentials
             result = self.client.declare_table(grpc_request)
             if isinstance(result, dict):
-                return DeclareTableResponse(**result)
-            return DeclareTableResponse(location=request.location)
+                response = DeclareTableResponse(**result)
+            else:
+                response = DeclareTableResponse(location=request.location)
+            # See describe_table above for rationale: managed_versioning is
+            # a client-side capability flag, not something GooseFS Table
+            # Master tracks, so we override it from our configuration.
+            if self.managed_versioning:
+                response.managed_versioning = True
+            return response
 
         except Exception as e:
             logger.error(f"Failed to declare table {request.id}: {e}")
