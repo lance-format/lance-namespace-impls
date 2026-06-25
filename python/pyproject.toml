@@ -11,9 +11,9 @@ license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 
 dependencies = [
-    "pylance>=0.26.0",
-    "lance-namespace>=0.8.6",
-    "lance-namespace-urllib3-client>=0.8.6",
+    "pylance>=7.0.0",
+    "lance-namespace>=0.7.7",
+    "lance-namespace-urllib3-client>=0.7.7",
     "pyarrow>=15.0.0",
     "typing-extensions>=4.5.0",
 ]
