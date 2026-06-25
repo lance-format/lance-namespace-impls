@@ -276,4 +276,30 @@ public class TestHive2Namespace {
         assertThrows(LanceNamespaceException.class, () -> namespace.dropNamespace(dropRequest));
     assertTrue(error.getMessage().contains("Database non_existent_db doesn't exist"));
   }
+
+  @Test
+  public void testCloseReleasesClientPool() throws Exception {
+    // A freshly initialized namespace can be used and then closed (idempotently), releasing its
+    // client pool.
+    Hive2Namespace closeable = new Hive2Namespace();
+    closeable.setHadoopConf(metastore.hiveConf());
+    closeable.initialize(Maps.newHashMap(), allocator);
+
+    // Exercise the metastore client so the pool has at least one live connection.
+    CreateNamespaceRequest nsRequest = new CreateNamespaceRequest();
+    nsRequest.setId(Lists.list("close_test_db"));
+    nsRequest.setMode("Create");
+    closeable.createNamespace(nsRequest);
+
+    // close() must not throw, and must be idempotent.
+    closeable.close();
+    closeable.close();
+  }
+
+  @Test
+  public void testCloseBeforeInitializeIsSafe() {
+    // close() before initialize() (clientPool == null) must be a no-op, not an NPE.
+    Hive2Namespace uninitialized = new Hive2Namespace();
+    uninitialized.close();
+  }
 }
