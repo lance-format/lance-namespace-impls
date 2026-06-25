@@ -58,6 +58,7 @@ import org.apache.thrift.TException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -70,7 +71,7 @@ import static org.lance.namespace.hive2.Hive2ErrorType.HiveMetaStoreError;
 import static org.lance.namespace.hive2.Hive2ErrorType.TableAlreadyExists;
 import static org.lance.namespace.hive2.Hive2ErrorType.TableNotFound;
 
-public class Hive2Namespace implements LanceNamespace {
+public class Hive2Namespace implements LanceNamespace, Closeable {
   private static final Logger LOG = LoggerFactory.getLogger(Hive2Namespace.class);
 
   private Hive2ClientPool clientPool;
@@ -686,5 +687,20 @@ public class Hive2Namespace implements LanceNamespace {
     // Use the configured root as fallback: {root}/{database}.db/{table}
     return String.format(
         "%s/%s.db/%s", config.getRoot(), namespaceName.toLowerCase(), tableName.toLowerCase());
+  }
+
+  /**
+   * Closes the underlying Hive Metastore client pool, releasing all pooled metastore connections.
+   *
+   * <p>As with any resource-holding namespace implementation, callers should close instances they
+   * no longer need so the pooled metastore client connections are released; this matters in
+   * particular for short-lived instances. Safe to call when {@link #initialize} was never invoked,
+   * and idempotent.
+   */
+  @Override
+  public void close() {
+    if (clientPool != null) {
+      clientPool.close();
+    }
   }
 }

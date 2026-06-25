@@ -60,13 +60,14 @@ import org.apache.thrift.TException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-public class Hive3Namespace implements LanceNamespace {
+public class Hive3Namespace implements LanceNamespace, Closeable {
   private static final Logger LOG = LoggerFactory.getLogger(Hive3Namespace.class);
 
   private Hive3ClientPool clientPool;
@@ -800,5 +801,20 @@ public class Hive3Namespace implements LanceNamespace {
     return String.format(
         "%s/%s/%s.db/%s",
         config.getRoot(), catalogName.toLowerCase(), dbName.toLowerCase(), tableName.toLowerCase());
+  }
+
+  /**
+   * Closes the underlying Hive Metastore client pool, releasing all pooled metastore connections.
+   *
+   * <p>As with any resource-holding namespace implementation, callers should close instances they
+   * no longer need so the pooled metastore client connections are released; this matters in
+   * particular for short-lived instances. Safe to call when {@link #initialize} was never invoked,
+   * and idempotent.
+   */
+  @Override
+  public void close() {
+    if (clientPool != null) {
+      clientPool.close();
+    }
   }
 }

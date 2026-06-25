@@ -387,4 +387,33 @@ public class TestHive3Namespace {
     assertTrue(error.getMessage().contains("is not empty"));
     assertTrue(error.getMessage().contains("databases"));
   }
+
+  @Test
+  public void testCloseReleasesClientPool() throws Exception {
+    // A freshly initialized namespace can be used and then closed (idempotently), releasing its
+    // client pool.
+    Hive3Namespace closeable = new Hive3Namespace();
+    closeable.setHadoopConf(metastore.hiveConf());
+    closeable.initialize(Maps.newHashMap(), allocator);
+
+    // Exercise the metastore client so the pool has at least one live connection.
+    CreateNamespaceRequest nsRequest = new CreateNamespaceRequest();
+    Map<String, String> properties = Maps.newHashMap();
+    properties.put("catalog.location.uri", "file://" + tmpDirBase + "/close_test_catalog");
+    nsRequest.setProperties(properties);
+    nsRequest.setId(Lists.list("close_test_catalog"));
+    nsRequest.setMode("Create");
+    closeable.createNamespace(nsRequest);
+
+    // close() must not throw, and must be idempotent.
+    closeable.close();
+    closeable.close();
+  }
+
+  @Test
+  public void testCloseBeforeInitializeIsSafe() {
+    // close() before initialize() (clientPool == null) must be a no-op, not an NPE.
+    Hive3Namespace uninitialized = new Hive3Namespace();
+    uninitialized.close();
+  }
 }
