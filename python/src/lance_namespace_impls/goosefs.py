@@ -172,6 +172,100 @@ from lance_namespace_impls.rest_client import (
     TableNotFoundException,
 )
 
+# Lance's pylance Rust glue inspects ``exc.code`` to translate Python errors
+# back into native ``NamespaceError`` variants (see
+# ``lance/python/src/namespace.rs::namespace_error_from_py``). When commit-
+# path operations like ``list_table_versions`` legitimately return
+# "table not found" for a *brand-new* table, we must raise an exception
+# carrying ``code == ErrorCode.TABLE_NOT_FOUND`` so that ``lance.write_dataset``
+# can swallow it and proceed into the create branch instead of bubbling it
+# up as a generic ``LanceError(IO)``.
+try:
+    from lance_namespace.errors import (
+        TableNotFoundError as _NsTableNotFoundError,
+    )
+except ImportError:  # pragma: no cover — only used at runtime
+    _NsTableNotFoundError = None  # type: ignore[assignment]
+
+
+def _raise_table_not_found(table_id) -> None:
+    """Raise the lance_namespace TableNotFoundError if available."""
+    msg = f"Table {table_id} does not exist"
+    if _NsTableNotFoundError is not None:
+        raise _NsTableNotFoundError(msg)
+    raise TableNotFoundException(msg)
+
+
+# Server-side ``LanceUnderNamespace`` wraps the original
+# ``TableNotFoundException`` inside a generic ``IOException`` with a message
+# like ``Failed to describe table: [X]`` / ``Failed to list versions for
+# table [X]`` before it crosses the gRPC boundary, so the client never sees
+# the inner cause. These prefixes are therefore unambiguous "table does not
+# exist" signals in the current GooseFS implementation.
+_GOOSEFS_NOT_FOUND_MARKERS: tuple = (
+    "table not found",
+    "tablenotfoundexception",
+    "failed to describe table",
+    "failed to list versions for table",
+)
+
+
+def _lift_table_version_metadata(version_dict) -> None:
+    """Promote ``metadata.{manifest_path, manifest_size, e_tag}`` back to the
+    top level of a ``TableVersion`` dict.
+
+    Why: GooseFS Table Master's proto ``TableVersion`` (see
+    ``core/transport/.../table_master.proto``) only defines
+    ``version`` / ``timestamp`` / ``metadata`` as top-level fields. The
+    server-side ``LanceResponseConverter.toProtoTableVersion`` therefore
+    serialises Lance-specific ``manifestPath`` / ``manifestSize`` / ``eTag``
+    *inside* the metadata map. Pylance, however, models those as required
+    top-level fields on ``TableVersion``, so we lift them back before the
+    pydantic model is constructed.
+    """
+    if not isinstance(version_dict, dict):
+        return
+    metadata = version_dict.get("metadata")
+    if not isinstance(metadata, dict):
+        return
+    mp = metadata.pop("manifest_path", None)
+    if mp is not None and "manifest_path" not in version_dict:
+        version_dict["manifest_path"] = mp
+    ms = metadata.pop("manifest_size", None)
+    if ms is not None and "manifest_size" not in version_dict:
+        try:
+            version_dict["manifest_size"] = int(ms)
+        except (TypeError, ValueError):
+            version_dict["manifest_size"] = ms
+    et = metadata.pop("e_tag", None)
+    if et is not None and "e_tag" not in version_dict:
+        version_dict["e_tag"] = et
+    # Drop empty metadata to keep the model tidy.
+    if not metadata:
+        version_dict.pop("metadata", None)
+
+
+def _is_table_not_found_error(exc: Exception) -> bool:
+    """Heuristic: detect 'table not found' coming back over gRPC.
+
+    GooseFS Table Master maps Java's ``TableNotFoundException`` to gRPC
+    StatusCode.UNKNOWN with a free-form ``details`` string. We inspect both
+    the status details and the original exception text.
+    """
+    text = str(exc).lower()
+    if any(marker in text for marker in _GOOSEFS_NOT_FOUND_MARKERS):
+        return True
+    # grpc.RpcError carries .details() / .code()
+    details = getattr(exc, "details", None)
+    if callable(details):
+        try:
+            d = (details() or "").lower()
+            if any(marker in d for marker in _GOOSEFS_NOT_FOUND_MARKERS):
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+    return False
+
 # goosefs-metastore-client (and its bundled `grpc_files` proto package) is an
 # optional dependency, installed via the `goosefs` extra. Gate every gRPC
 # import behind a single flag so the rest of `lance_namespace_impls` keeps
@@ -360,6 +454,60 @@ class GooseFSNamespace(LanceNamespace):
                     value = "true" if value else "false"
                 self._namespace_default_properties[key] = str(value)
 
+        # Lance root path on GooseFS. When set, declare_table will auto-fill
+        # ``DeclareTablePRequest.location`` as
+        #   ``goosefs://<host>:<port>/<root>/<table_name>.lance``
+        # if the caller didn't provide one. This matches what the server-side
+        # ``DirectoryNamespace.declareTable`` Lance JNI expects:
+        # "Cannot declare table X at location '', must be at location
+        #  goosefs://host:port/<root>/X.lance".
+        # Two configuration shapes are accepted:
+        #   * ``root="/tmp/lance"`` — path-only, master host:port assumed
+        #   * ``root="goosefs://host:port/tmp/lance"`` — full URI
+        self._lance_root: Optional[str] = None
+        raw_root = properties.get("root") or properties.get("lance_root")
+        if raw_root:
+            self._lance_root = self._normalize_lance_root(str(raw_root))
+
+        # Default storage_options surfaced to Lance via declare_table /
+        # describe_table responses. Lance's object_store goosefs provider
+        # forwards these to the OpenDAL goosefs scheme. The two we care
+        # about most:
+        #   * ``goosefs_auth_type``     — set to ``"nosasl"`` when the
+        #     GooseFS master is configured with
+        #     ``goosefs.security.authentication.type=NOSASL`` (the default
+        #     for our local dev deployment). Without this, OpenDAL tries a
+        #     PLAIN SASL auth RPC which fails with
+        #     ``Method not found: SaslAuthenticationService/authenticate``.
+        #   * ``goosefs_master_addr``   — comma-separated host:port pairs,
+        #     used for GooseFS HA setups. Defaults to the URI authority.
+        #
+        # Anything matching one of these patterns in the connect-time
+        # ``properties`` is also collected and forwarded as-is:
+        #   * keys starting with ``goosefs_`` (Lance object_store keys)
+        #   * keys starting with ``storage.``  (stripped before forwarding,
+        #     to match the convention used by other lance-namespace impls)
+        self._storage_options: Dict[str, str] = {}
+        # First pass: honour explicit knobs.
+        auth_type_value = properties.get("goosefs_auth_type") or properties.get(
+            "auth_type"
+        )
+        if auth_type_value is None and self.authentication_enabled is False:
+            # We've explicitly disabled SASL on the Table Master gRPC channel,
+            # so it's almost certain the underlying GooseFS Master is also
+            # NOSASL — propagate that.
+            auth_type_value = "nosasl"
+        if auth_type_value:
+            self._storage_options["goosefs_auth_type"] = str(auth_type_value).lower()
+        # Second pass: forward any ``goosefs_*`` or ``storage.*`` keys.
+        for key, value in properties.items():
+            if value is None:
+                continue
+            if key.startswith("goosefs_"):
+                self._storage_options[key] = str(value)
+            elif key.startswith("storage."):
+                self._storage_options[key[len("storage."):]] = str(value)
+
         # Persist properties for `client` to pass to from_properties().
         # Lock in our authentication_enabled default (False) so that we
         # don't depend on the installed client's own default (which has
@@ -371,6 +519,147 @@ class GooseFSNamespace(LanceNamespace):
     def namespace_id(self) -> str:
         """Return a human-readable unique identifier for this namespace instance."""
         return f"GooseFSNamespace {{ host: {self.host!r}, port: {self.port} }}"
+
+    # ----------------------------------------------------------------- root
+    def _normalize_lance_root(self, raw: str) -> str:
+        """Normalize a Lance root into ``goosefs://<host>:<port>/<path>``.
+
+        * ``goosefs://host:port/path`` — returned as-is (trailing ``/`` stripped)
+        * ``gfs://host:port/path``     — scheme rewritten to ``goosefs``
+        * ``/path`` or ``path``         — combined with the master endpoint
+          we connect to (``self.host:self.port``). NOTE: GooseFS Master's
+          *RPC* port is sometimes different from the Table Master port the
+          client talks to. If you see ``Cannot declare table X at location
+          '', must be at location goosefs://<other-port>/...`` errors, pass
+          a fully-qualified ``root="goosefs://host:<rpc-port>/path"`` here.
+        """
+        s = raw.strip().rstrip("/")
+        if not s:
+            return ""
+        if s.startswith("goosefs://"):
+            return s
+        if s.startswith("gfs://"):
+            return "goosefs://" + s[len("gfs://"):]
+        path = s if s.startswith("/") else "/" + s
+        return f"goosefs://{self.host}:{self.port}{path}"
+
+    @staticmethod
+    def _coerce_request(request, model_cls):
+        """Best-effort: turn ``request`` into a ``model_cls`` instance.
+
+        Pylance's Rust glue (see ``lance/python/src/namespace.rs`` ->
+        ``DictWithModelDump``) passes namespace requests over the JNI/PyO3
+        boundary as a *dict-like* object with a ``.model_dump()`` method.
+        That dict-like has **no real attributes** like ``.id`` or
+        ``.page_token``, which our ``request.id`` accessors below assume.
+
+        We accept three shapes:
+        * already an instance of ``model_cls`` — returned as-is.
+        * a real ``dict`` — fed straight into ``model_cls(**dict)``.
+        * any object exposing ``.model_dump()`` (the DictWithModelDump
+          case) — round-tripped through that into ``model_cls``.
+
+        Fallback: return the original object unchanged so the existing code
+        path still runs (and likely raises the same error as before).
+        """
+        if isinstance(request, model_cls):
+            return request
+        try:
+            if isinstance(request, dict):
+                return model_cls(**request)
+            if hasattr(request, "model_dump"):
+                payload = request.model_dump()
+                if isinstance(payload, dict):
+                    return model_cls(**payload)
+        except Exception:  # noqa: BLE001 — diagnostic best-effort only
+            pass
+        return request
+
+    def _merge_storage_options(self, response):
+        """Inject the namespace-level storage_options into a response.
+
+        Lance's ``write_dataset`` / ``dataset`` flows propagate
+        ``response.storage_options`` straight into the underlying
+        ``object_store`` / OpenDAL provider. For GooseFS, that includes
+        the all-important ``goosefs_auth_type`` switch (see __init__).
+
+        Caller-supplied options on the response win — we only fill in
+        keys the server didn't already set.
+        """
+        if not self._storage_options:
+            return response
+        try:
+            current = getattr(response, "storage_options", None) or {}
+            merged = dict(self._storage_options)
+            merged.update(current)  # server value > client default
+            response.storage_options = merged
+        except Exception:  # noqa: BLE001 — never let this break the response
+            pass
+        return response
+
+    @staticmethod
+    def _table_dir_for(table_id: list) -> Optional[str]:
+        """Return the ``<table>.lance`` directory name used by Lance's
+        ``DirectoryNamespace`` to lay tables out flat under the namespace
+        root. Used to repair relative manifest paths in
+        ``create_table_version`` / ``describe_table_version``.
+        """
+        if not table_id:
+            return None
+        return f"{table_id[-1]}.lance"
+
+    @classmethod
+    def _namespace_relative_manifest_path(cls, raw: str, table_id: list) -> str:
+        """Convert a Lance-emitted ``manifest_path`` into the
+        ``<table>.lance/_versions/...`` shape that the GooseFS Table Master's
+        ``object_store`` (rooted at the namespace) needs.
+
+        Accepts:
+        * ``_versions/<...>``                              → table-relative
+        * ``<table>.lance/_versions/<...>``                → already namespace-relative
+        * ``goosefs://host:port/<ns>/<table>.lance/_versions/<...>`` → URI form
+        * any path containing a ``<table>.lance/`` segment
+
+        Returns a string of the form ``<table>.lance/_versions/<file>``.
+        Falls back to the raw value if no transformation makes sense.
+        """
+        if raw is None:
+            return raw
+        table_dir = cls._table_dir_for(table_id)
+        cleaned = raw
+        # 1. Strip URI scheme/authority/host segment when present.
+        for scheme in ("goosefs://", "gfs://"):
+            if cleaned.startswith(scheme):
+                rest = cleaned[len(scheme):]
+                slash = rest.find("/")
+                cleaned = rest[slash + 1:] if slash >= 0 else ""
+                break
+        cleaned = cleaned.lstrip("/")
+        # 2. If the path already includes the table dir segment, trim
+        #    everything before the *last* occurrence and reattach.
+        if table_dir:
+            needle = table_dir.rstrip("/") + "/"
+            idx = cleaned.rfind(needle)
+            if idx >= 0:
+                cleaned = needle + cleaned[idx + len(needle):]
+            else:
+                # 3. Plain table-relative path → prepend the table dir.
+                cleaned = needle + cleaned
+        return cleaned
+
+    def _default_table_location(self, table_id: list) -> Optional[str]:
+        """Compute the canonical ``<lance_root>/<table>.lance`` location.
+
+        Returns ``None`` if no Lance root was configured. GooseFS Table
+        Master expects ``id[0]`` to be the catalog and the **table name** to
+        be ``id[-1]``; intermediate elements are child namespaces. The on-
+        disk layout used by ``DirectoryNamespace`` is flat under the root,
+        so we only use the final table-name segment.
+        """
+        if not self._lance_root or not table_id:
+            return None
+        table_name = table_id[-1]
+        return f"{self._lance_root}/{table_name}.lance"
 
     @property
     def client(self) -> GoosefsMetastoreClient:
@@ -541,6 +830,8 @@ class GooseFSNamespace(LanceNamespace):
         Returns:
             Table description with location
         """
+        # Lance Rust may pass a DictWithModelDump here (see ``_coerce_request``).
+        request = self._coerce_request(request, DescribeTableRequest)
         try:
             grpc_request = DescribeTablePRequest()
             if request.id:
@@ -569,11 +860,51 @@ class GooseFSNamespace(LanceNamespace):
             # client-side deployment decision.
             if self.managed_versioning:
                 response.managed_versioning = True
+            # If the server didn't return a location (current GooseFS
+            # implementation leaves it empty for Lance under-namespaces),
+            # fall back to the canonical ``<root>/<table>.lance`` path so
+            # that callers like ``lance.dataset(namespace_client=ns, ...)``
+            # can still open the dataset.
+            if not getattr(response, "location", None):
+                fallback = self._default_table_location(
+                    list(request.id) if request.id else []
+                )
+                if fallback:
+                    response.location = fallback
+            # Inject default storage_options (e.g. ``goosefs_auth_type=nosasl``)
+            # so Lance's object_store goosefs provider doesn't try to do SASL.
+            response = self._merge_storage_options(response)
             return response
 
         except Exception as e:
-            if "not found" in str(e).lower():
-                raise TableNotFoundException(f"Table {request.id} does not exist")
+            # GooseFS Lance under-namespace currently surfaces ANY underlying
+            # error as a bare ``IOException("Failed to describe table: [X]")``
+            # — including the legitimate case where the table file genuinely
+            # exists on the underlying object store but the namespace JNI
+            # delegate hasn't tracked it (typical for tables created with
+            # ``managed_versioning=False`` against a DirectoryNamespace).
+            #
+            # If we have enough information (Lance root + table_id) to point
+            # Lance at the table directly, synthesise a minimal Response so
+            # ``lance.write_dataset(mode="append")`` / ``lance.dataset(...)``
+            # can keep going. Lance will then re-verify table existence by
+            # reading the actual manifest from the object store.
+            if _is_table_not_found_error(e):
+                fallback_location = self._default_table_location(
+                    list(request.id) if request.id else []
+                )
+                if fallback_location:
+                    logger.info(
+                        "describe_table(%s) returned not-found; synthesising "
+                        "response with fallback location %s",
+                        request.id,
+                        fallback_location,
+                    )
+                    response = DescribeTableResponse(location=fallback_location)
+                    if self.managed_versioning:
+                        response.managed_versioning = True
+                    return self._merge_storage_options(response)
+                _raise_table_not_found(request.id)
             logger.error(f"Failed to describe table {request.id}: {e}")
             raise
 
@@ -591,8 +922,17 @@ class GooseFSNamespace(LanceNamespace):
             grpc_request = DeclareTablePRequest()
             if request.id:
                 grpc_request.id.extend(request.id)
-            if request.location:
-                grpc_request.location = request.location
+            # GooseFS forwards ``location`` directly to Lance JNI's
+            # DirectoryNamespace.declareTable, which *requires* the location
+            # to be exactly ``<root>/<table>.lance`` — sending empty fails
+            # with "Cannot declare table X at location ''". Auto-fill it
+            # from the configured Lance root when the caller (e.g. pylance's
+            # write_dataset) didn't supply one.
+            effective_location = request.location or self._default_table_location(
+                list(request.id) if request.id else []
+            )
+            if effective_location:
+                grpc_request.location = effective_location
             if hasattr(request, "properties") and request.properties:
                 grpc_request.properties.update(request.properties)
             if (
@@ -603,13 +943,16 @@ class GooseFSNamespace(LanceNamespace):
             result = self.client.declare_table(grpc_request)
             if isinstance(result, dict):
                 response = DeclareTableResponse(**result)
+                if effective_location and not getattr(response, "location", None):
+                    response.location = effective_location
             else:
-                response = DeclareTableResponse(location=request.location)
+                response = DeclareTableResponse(location=effective_location)
             # See describe_table above for rationale: managed_versioning is
             # a client-side capability flag, not something GooseFS Table
             # Master tracks, so we override it from our configuration.
             if self.managed_versioning:
                 response.managed_versioning = True
+            response = self._merge_storage_options(response)
             return response
 
         except Exception as e:
@@ -1311,6 +1654,7 @@ class GooseFSNamespace(LanceNamespace):
         Returns:
             List table versions response
         """
+        request = self._coerce_request(request, ListTableVersionsRequest)
         try:
             grpc_request = ListTableVersionsPRequest()
             if request.id:
@@ -1323,9 +1667,28 @@ class GooseFSNamespace(LanceNamespace):
                 grpc_request.descending = request.descending
             result = self.client.list_table_versions(grpc_request)
             if isinstance(result, dict):
-                return ListTableVersionsResponse(**result)
-            return ListTableVersionsResponse(versions=[])
+                # See comment in create_table_version: GooseFS Table Master's
+                # proto ``TableVersion`` lacks manifest_path/manifest_size/
+                # e_tag at the top level, so the converter stuffs them inside
+                # ``metadata``. Lift them back to the structural fields the
+                # pylance-side model expects.
+                for v in result.get("versions", []) or []:
+                    _lift_table_version_metadata(v)
+                response = ListTableVersionsResponse(**result)
+            else:
+                response = ListTableVersionsResponse(versions=[])
+            self._strip_table_dir_from_version(
+                response, list(request.id) if request.id else []
+            )
+            return response
         except Exception as e:
+            # Translate "table not found" into a typed exception with
+            # ``code = TABLE_NOT_FOUND`` so that pylance's ``write_dataset``
+            # can detect the empty/new-table case (called with descending=True
+            # limit=1) and proceed into the create branch instead of
+            # surfacing a generic LanceError(IO).
+            if _is_table_not_found_error(e):
+                _raise_table_not_found(request.id)
             logger.error(f"Failed to list table versions for {request.id}: {e}")
             raise
 
@@ -1344,13 +1707,31 @@ class GooseFSNamespace(LanceNamespace):
         Returns:
             Create table version response
         """
+        request = self._coerce_request(request, CreateTableVersionRequest)
         try:
             grpc_request = CreateTableVersionPRequest()
             grpc_request.id.extend(request.id)
             if request.version is not None:
                 grpc_request.version = request.version
             if request.manifest_path is not None:
-                grpc_request.manifest_path = request.manifest_path
+                # Lance ``LanceNamespaceExternalManifestStore::put`` (see
+                # ``lance/rust/lance/src/io/commit/namespace_manifest.rs``)
+                # emits a staging manifest path *relative to the table's*
+                # object store root: e.g. ``_versions/<encoded>.manifest-<uuid>``.
+                # The GooseFS Table Master, however, hands that path to the
+                # **namespace-root** object store on the server side, which
+                # then can't find it. Repair the asymmetry here by prefixing
+                # the table directory segment (last id component + ".lance"),
+                # so the server sees ``<table>.lance/_versions/<...>``.
+                #
+                # Note: depending on the Lance / object_store version,
+                # ``staging_path.to_string()`` may also produce a fully
+                # qualified URI like ``goosefs://host:port/<ns_root>/<table>.lance/_versions/...``.
+                # We canonicalise into ``<table>.lance/_versions/...`` here.
+                grpc_request.manifest_path = self._namespace_relative_manifest_path(
+                    request.manifest_path,
+                    list(request.id) if request.id else [],
+                )
             if hasattr(request, "manifest_size") and request.manifest_size is not None:
                 grpc_request.manifest_size = request.manifest_size
             if hasattr(request, "e_tag") and request.e_tag is not None:
@@ -1360,11 +1741,15 @@ class GooseFSNamespace(LanceNamespace):
             if hasattr(request, "naming_scheme") and request.naming_scheme is not None:
                 grpc_request.naming_scheme = request.naming_scheme
             result = self.client.create_table_version(grpc_request)
-            return (
-                CreateTableVersionResponse(**result)
-                if isinstance(result, dict)
-                else result
+            if isinstance(result, dict):
+                _lift_table_version_metadata(result.get("version"))
+                response = CreateTableVersionResponse(**result)
+            else:
+                response = result
+            self._strip_table_dir_from_version(
+                response, list(request.id) if request.id else []
             )
+            return response
         except Exception as e:
             logger.error(f"Failed to create table version for {request.id}: {e}")
             raise
@@ -1383,20 +1768,89 @@ class GooseFSNamespace(LanceNamespace):
         Returns:
             Describe table version response
         """
+        request = self._coerce_request(request, DescribeTableVersionRequest)
         try:
             grpc_request = DescribeTableVersionPRequest()
             grpc_request.id.extend(request.id)
             if request.version is not None:
                 grpc_request.version = request.version
             result = self.client.describe_table_version(grpc_request)
-            return (
-                DescribeTableVersionResponse(**result)
-                if isinstance(result, dict)
-                else result
+            if isinstance(result, dict):
+                _lift_table_version_metadata(result.get("version"))
+                response = DescribeTableVersionResponse(**result)
+            else:
+                response = result
+            # See create_table_version for the symmetric prefix repair. The
+            # server stores manifest paths relative to the namespace root
+            # (``<table>.lance/_versions/...``); Lance's
+            # ``LanceNamespaceExternalManifestStore::get`` consumer expects
+            # them relative to the *table* root (``_versions/...``). Strip
+            # the table-dir prefix on the way back so reads succeed.
+            self._strip_table_dir_from_version(
+                response, list(request.id) if request.id else []
             )
+            return response
         except Exception as e:
+            if _is_table_not_found_error(e):
+                _raise_table_not_found(request.id)
             logger.error(f"Failed to describe table version for {request.id}: {e}")
             raise
+
+    def _strip_table_dir_from_version(self, response, table_id: list) -> None:
+        """Normalize a server-returned ``TableVersion.manifest_path`` into a
+        path Lance's ``LanceNamespaceExternalManifestStore`` can consume.
+
+        Pylance expects ``manifest_path`` to be an **object-store path
+        relative to the table's own root**, e.g.
+        ``_versions/18446744073709551614.manifest``.
+
+        The GooseFS Java server, however, returns whatever its in-process
+        ``object_store::Path`` debug-prints — that can be one of:
+
+        * fully-qualified URI: ``goosefs://host:port/<ns_root>/<table>.lance/_versions/...``
+        * namespace-relative:  ``<table>.lance/_versions/...``
+        * table-relative:      ``_versions/...``   (the desired shape)
+
+        We canonicalise into the third form here.
+        """
+        table_dir = self._table_dir_for(table_id)
+
+        def _normalize(mp: str) -> str:
+            if not mp:
+                return mp
+            cleaned = mp
+            # Drop scheme://authority/ if present.
+            for scheme in ("goosefs://", "gfs://"):
+                if cleaned.startswith(scheme):
+                    rest = cleaned[len(scheme):]
+                    slash = rest.find("/")
+                    cleaned = rest[slash + 1:] if slash >= 0 else ""
+                    break
+            cleaned = cleaned.lstrip("/")
+            # Look for ``<table>.lance/`` anywhere and trim everything before
+            # it. This handles both the ``ns_root/<table>.lance/...`` and the
+            # bare ``<table>.lance/...`` shapes uniformly.
+            if table_dir:
+                needle = table_dir.rstrip("/") + "/"
+                idx = cleaned.rfind(needle)
+                if idx >= 0:
+                    cleaned = cleaned[idx + len(needle):]
+            return cleaned
+
+        def _strip(v):
+            if v is None:
+                return
+            mp = getattr(v, "manifest_path", None)
+            if isinstance(mp, str) and mp:
+                v.manifest_path = _normalize(mp)
+
+        ver = getattr(response, "version", None)
+        if ver is not None:
+            _strip(ver)
+        vers = getattr(response, "versions", None)
+        if vers:
+            for v in vers:
+                _strip(v)
 
     def batch_delete_table_versions(
         self, request: BatchDeleteTableVersionsRequest
