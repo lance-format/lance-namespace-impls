@@ -57,7 +57,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <lance-core.version>7.0.0</lance-core.version>
+        <lance-core.version>9.0.0-beta.10</lance-core.version>
         <lance-namespace.version>0.7.7</lance-namespace.version>
         <arrow.version>18.3.0</arrow.version>
         <netty.version>4.1.118.Final</netty.version>
