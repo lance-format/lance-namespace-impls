@@ -96,6 +96,23 @@ test-polaris:
 	uv run pytest tests/test_polaris.py
 
 # ============================================================================
+# GooseFS
+# ============================================================================
+
+.PHONY: lint-goosefs
+lint-goosefs:
+	uv run ruff check src/lance_namespace_impls/goosefs.py tests/test_goosefs.py tests/test_goosefs_integration.py
+	uv run ruff format --check src/lance_namespace_impls/goosefs.py tests/test_goosefs.py tests/test_goosefs_integration.py
+
+.PHONY: install-goosefs
+install-goosefs:
+	uv sync --extra goosefs --extra dev
+
+.PHONY: test-goosefs
+test-goosefs:
+	uv run pytest tests/test_goosefs.py
+
+# ============================================================================
 # All
 # ============================================================================
 
@@ -164,3 +181,7 @@ integ-test-iceberg:
 .PHONY: integ-test-glue
 integ-test-glue:
 	uv run pytest tests/test_glue_integration.py -v
+
+.PHONY: integ-test-goosefs
+integ-test-goosefs:
+	uv run pytest tests/test_goosefs_integration.py -v
