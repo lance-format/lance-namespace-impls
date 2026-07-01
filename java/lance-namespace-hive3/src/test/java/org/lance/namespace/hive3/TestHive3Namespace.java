@@ -17,6 +17,7 @@ import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.errors.InvalidInputException;
 import org.lance.namespace.errors.LanceNamespaceException;
 import org.lance.namespace.model.CreateNamespaceRequest;
+import org.lance.namespace.model.DeclareTableRequest;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
 import org.lance.namespace.model.DescribeTableRequest;
@@ -31,6 +32,7 @@ import com.google.common.collect.Maps;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.hadoop.hive.conf.HiveConf;
+import org.apache.hadoop.hive.metastore.api.Table;
 import org.assertj.core.util.Lists;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -415,5 +417,49 @@ public class TestHive3Namespace {
     // close() before initialize() (clientPool == null) must be a no-op, not an NPE.
     Hive3Namespace uninitialized = new Hive3Namespace();
     uninitialized.close();
+  }
+
+  @Test
+  public void testDeclareTableMarksTableAsExternal() throws Exception {
+    DeclareTableRequest declareRequest = new DeclareTableRequest();
+    declareRequest.setId(Lists.list("test_catalog", "test_db", "ext_tbl"));
+    declareRequest.setLocation(tmpDirBase + "/test_catalog/test_db/ext_tbl");
+    namespace.declareTable(declareRequest);
+
+    Table hmsTable =
+        metastore.clientPool().run(client -> client.getTable("test_catalog", "test_db", "ext_tbl"));
+    assertEquals("EXTERNAL_TABLE", hmsTable.getTableType());
+    assertEquals("TRUE", hmsTable.getParameters().get("EXTERNAL"));
+    assertEquals("lance", hmsTable.getParameters().get("table_type"));
+    assertEquals("storage", hmsTable.getParameters().get("managed_by"));
+  }
+
+  /**
+   * Verifies that a table declared via {@link org.lance.namespace.LanceNamespace#declareTable}
+   * survives a raw HMS {@code dropTable(deleteData=true)} — i.e. the same call path used by Hive
+   * CLI / Spark {@code DROP TABLE}. Without {@code parameters.EXTERNAL=TRUE}, HMS would treat the
+   * table as MANAGED and purge the data directory.
+   */
+  @Test
+  public void testDropTablePreservesDataForDeclaredTable() throws Exception {
+    File location = new File(tmpDirBase, "test_catalog/test_db/keep_tbl");
+    assertTrue(location.mkdirs());
+    File dataFile = new File(location, "data.marker");
+    assertTrue(dataFile.createNewFile());
+
+    DeclareTableRequest declareRequest = new DeclareTableRequest();
+    declareRequest.setId(Lists.list("test_catalog", "test_db", "keep_tbl"));
+    declareRequest.setLocation(location.getAbsolutePath());
+    namespace.declareTable(declareRequest);
+
+    metastore
+        .clientPool()
+        .run(
+            client -> {
+              client.dropTable("test_catalog", "test_db", "keep_tbl", true, true);
+              return null;
+            });
+
+    assertTrue(dataFile.exists(), "data file was purged: EXTERNAL=TRUE not honored by HMS");
   }
 }
