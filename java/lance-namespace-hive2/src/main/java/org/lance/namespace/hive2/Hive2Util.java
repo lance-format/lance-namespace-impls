@@ -124,6 +124,8 @@ public class Hive2Util {
     }
     params.put("table_type", "lance");
     params.put("managed_by", "storage");
+    // HMS's MetaStoreUtils.isExternalTable() reads parameters.EXTERNAL, not Table.tableType.
+    params.put("EXTERNAL", "TRUE");
     return params;
   }
 }
