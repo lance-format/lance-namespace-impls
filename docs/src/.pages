@@ -9,4 +9,5 @@ nav:
   - Google BigLake: biglake.md
   - Google Dataproc: dataproc.md
   - Microsoft OneLake: onelake.md
+  - Tencent GooseFS: goosefs.md
   - Unity Catalog: unity.md

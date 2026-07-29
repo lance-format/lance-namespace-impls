@@ -31,6 +31,11 @@ hive3 = [
     "thrift>=0.13.0",
     "hive-metastore-client>=1.0.0",
 ]
+goosefs = [
+    "grpcio>=1.78.0",
+    "grpcio-status>=1.78.0",
+    "goosefs_metastore_client==0.1.7",
+]
 iceberg = []
 polaris = []
 unity = []
@@ -39,6 +44,9 @@ all = [
     "botocore>=1.35.0",
     "thrift>=0.13.0",
     "hive-metastore-client>=1.0.0",
+    "grpcio>=1.78.0",
+    "grpcio-status>=1.78.0",
+    "goosefs_metastore_client==0.1.7",
 ]
 dev = [
     "pytest>=7.0.0",
