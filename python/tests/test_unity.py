@@ -359,6 +359,44 @@ class TestUnityNamespace(unittest.TestCase):
             response.location, "/data/lance/test_catalog/test_schema/test_table"
         )
 
+    @patch("lance_namespace_impls.unity.RestClient")
+    def test_describe_table_accepts_dict_request(self, mock_rest_client_class):
+        """pylance's Rust namespace bridge passes the request as a plain dict
+        (DictWithModelDump), not a DescribeTableRequest model. describe_table must
+        coerce it instead of raising AttributeError on attribute access. See #181."""
+        mock_client = MagicMock()
+        mock_rest_client_class.return_value = mock_client
+
+        mock_table_info = TableInfo(
+            name="test_table",
+            catalog_name="test_catalog",
+            schema_name="test_schema",
+            table_type="EXTERNAL",
+            data_source_format="TEXT",
+            columns=[],
+            storage_location="/data/lance/test_catalog/test_schema/test_table",
+            properties={"table_type": "lance"},
+        )
+        mock_client.get.return_value = mock_table_info
+
+        namespace = UnityNamespace(**self.properties)
+
+        class DictWithModelDump(dict):
+            def model_dump(self):
+                return dict(self)
+
+        request = DictWithModelDump(
+            {
+                "id": ["test_catalog", "test_schema", "test_table"],
+                "load_detailed_metadata": False,
+            }
+        )
+        response = namespace.describe_table(request)
+
+        self.assertEqual(
+            response.location, "/data/lance/test_catalog/test_schema/test_table"
+        )
+
     def test_arrow_type_conversion(self):
         """Test Arrow type to Unity type conversion."""
         namespace = UnityNamespace(**self.properties)

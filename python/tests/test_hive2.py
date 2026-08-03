@@ -219,6 +219,32 @@ class TestHive2Namespace:
 
         mock_client_instance.get_table.assert_called_once_with("test_db", "test_table")
 
+    def test_describe_table_accepts_dict_request(
+        self, hive_namespace, mock_hive_client
+    ):
+        """pylance's Rust namespace bridge passes the request as a plain dict
+        (DictWithModelDump), not a DescribeTableRequest model. describe_table must
+        coerce it instead of raising AttributeError on attribute access. See #181."""
+        mock_table = MagicMock()
+        mock_table.sd.location = "/tmp/warehouse/test_db.db/test_table"
+        mock_table.owner = "table_owner"
+        mock_table.parameters = {"table_type": "lance", "version": "42"}
+
+        mock_client_instance = MagicMock()
+        mock_client_instance.get_table.return_value = mock_table
+        mock_hive_client.__enter__.return_value = mock_client_instance
+
+        class DictWithModelDump(dict):
+            def model_dump(self):
+                return dict(self)
+
+        request = DictWithModelDump(
+            {"id": ["test_db", "test_table"], "load_detailed_metadata": False}
+        )
+        response = hive_namespace.describe_table(request)
+
+        assert response.location == "/tmp/warehouse/test_db.db/test_table"
+
     def test_deregister_table(self, hive_namespace, mock_hive_client):
         """Test deregistering a table without deleting data."""
         mock_table = MagicMock()
