@@ -12,6 +12,9 @@ This package provides third-party catalog implementations for Lance Namespace:
 - PolarisNamespace: Apache Polaris Catalog
 - UnityNamespace: Unity Catalog
 
+Adapters:
+- ThreeLevelNamespaceAdapter: Enforces exactly 3 levels for tables (catalog.database.table)
+
 Shared infrastructure:
 - RestClient: Reusable HTTP client for REST API implementations
 - RestClientException: Exception raised by RestClient
@@ -25,6 +28,7 @@ from lance_namespace_impls.hive3 import Hive3Namespace
 from lance_namespace_impls.iceberg import IcebergNamespace
 from lance_namespace_impls.polaris import PolarisNamespace
 from lance_namespace_impls.unity import UnityNamespace
+from lance_namespace_impls.three_level_adapter import ThreeLevelNamespaceAdapter
 from lance_namespace_impls.rest_client import (
     RestClient,
     RestClientException,
@@ -51,6 +55,7 @@ __all__ = [
     "IcebergNamespace",
     "PolarisNamespace",
     "UnityNamespace",
+    "ThreeLevelNamespaceAdapter",
     "RestClient",
     "RestClientException",
     "NamespaceException",
