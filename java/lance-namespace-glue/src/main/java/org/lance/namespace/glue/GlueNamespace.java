@@ -39,6 +39,7 @@ import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
 import org.lance.namespace.model.TableExistsRequest;
+import org.lance.namespace.model.TableExistsResponse;
 import org.lance.namespace.util.LanceTableUtil;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -269,13 +270,14 @@ public class GlueNamespace implements LanceNamespace, Closeable {
   }
 
   @Override
-  public void tableExists(TableExistsRequest request) {
+  public TableExistsResponse tableExists(TableExistsRequest request) {
     validateTableId(request.getId());
     String namespaceName = request.getId().get(0);
     String tableName = request.getId().get(1);
 
     Table table = getGlueTable(namespaceName, tableName);
     ensureLanceTable(table);
+    return new TableExistsResponse();
   }
 
   @Override

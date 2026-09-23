@@ -42,7 +42,9 @@ import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
 import org.lance.namespace.model.NamespaceExistsRequest;
+import org.lance.namespace.model.NamespaceExistsResponse;
 import org.lance.namespace.model.TableExistsRequest;
+import org.lance.namespace.model.TableExistsResponse;
 import org.lance.namespace.util.LanceTableUtil;
 
 import com.google.common.collect.Lists;
@@ -196,7 +198,7 @@ public class Hive3Namespace implements LanceNamespace, Closeable {
   }
 
   @Override
-  public void namespaceExists(NamespaceExistsRequest request) {
+  public NamespaceExistsResponse namespaceExists(NamespaceExistsRequest request) {
     ObjectIdentifier id = ObjectIdentifier.of(request.getId());
 
     ValidationUtil.checkArgument(
@@ -220,6 +222,8 @@ public class Hive3Namespace implements LanceNamespace, Closeable {
             String.format("Namespace does not exist: %s", id.stringStyleId()));
       }
     }
+
+    return new NamespaceExistsResponse();
   }
 
   @Override
@@ -243,7 +247,7 @@ public class Hive3Namespace implements LanceNamespace, Closeable {
   }
 
   @Override
-  public void tableExists(TableExistsRequest request) {
+  public TableExistsResponse tableExists(TableExistsRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
 
     ValidationUtil.checkArgument(
@@ -261,6 +265,7 @@ public class Hive3Namespace implements LanceNamespace, Closeable {
     }
 
     Hive3Util.validateLanceTable(hmsTable.get());
+    return new TableExistsResponse();
   }
 
   @Override

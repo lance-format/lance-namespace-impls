@@ -37,7 +37,9 @@ import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
 import org.lance.namespace.model.NamespaceExistsRequest;
+import org.lance.namespace.model.NamespaceExistsResponse;
 import org.lance.namespace.model.TableExistsRequest;
+import org.lance.namespace.model.TableExistsResponse;
 import org.lance.namespace.rest.RestClient;
 import org.lance.namespace.rest.RestClientException;
 import org.lance.namespace.util.LanceTableUtil;
@@ -265,8 +267,9 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
   }
 
   @Override
-  public void namespaceExists(NamespaceExistsRequest request) {
+  public NamespaceExistsResponse namespaceExists(NamespaceExistsRequest request) {
     describeNamespace(new DescribeNamespaceRequest().id(request.getId()));
+    return new NamespaceExistsResponse();
   }
 
   @Override
@@ -457,8 +460,9 @@ public class IcebergNamespace implements LanceNamespace, Closeable {
   }
 
   @Override
-  public void tableExists(TableExistsRequest request) {
+  public TableExistsResponse tableExists(TableExistsRequest request) {
     describeTable(new DescribeTableRequest().id(request.getId()));
+    return new TableExistsResponse();
   }
 
   @Override
