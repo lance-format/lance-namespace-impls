@@ -19,7 +19,11 @@ services:
       - lakekeeper-network
 
   minio:
-    image: minio/minio:latest
+    image: lance-iceberg-minio:local
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: minio.Dockerfile
     container_name: minio-lakekeeper
     environment:
       MINIO_ROOT_USER: minio-root-user
@@ -40,7 +44,11 @@ services:
       - lakekeeper-network
 
   minio-setup:
-    image: minio/mc:latest
+    image: lance-iceberg-minio:local
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: minio.Dockerfile
     container_name: minio-setup
     depends_on:
       minio:

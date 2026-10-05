@@ -122,7 +122,7 @@ logs-unity:
 
 # Iceberg REST Catalog (Lakekeeper)
 up-iceberg:
-	docker compose -f iceberg/docker-compose.yml up -d
+	docker compose -f iceberg/docker-compose.yml up -d --build
 
 down-iceberg:
 	docker compose -f iceberg/docker-compose.yml down
