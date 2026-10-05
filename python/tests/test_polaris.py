@@ -383,6 +383,38 @@ class TestPolarisNamespace(unittest.TestCase):
         )
 
     @patch("lance_namespace_impls.polaris.RestClient")
+    def test_describe_table_accepts_dict_request(self, mock_rest_client_class):
+        """pylance's Rust namespace bridge passes the request as a plain dict
+        (DictWithModelDump), not a DescribeTableRequest model. describe_table must
+        coerce it instead of raising AttributeError on attribute access. See #181."""
+        mock_client = MagicMock()
+        mock_rest_client_class.return_value = mock_client
+
+        mock_client.get.return_value = {
+            "table": {
+                "format": "lance",
+                "base-location": "/data/lance/ns/table",
+                "properties": {"key": "value"},
+            }
+        }
+
+        namespace = PolarisNamespace(**self.properties)
+
+        class DictWithModelDump(dict):
+            def model_dump(self):
+                return dict(self)
+
+        request = DictWithModelDump(
+            {
+                "id": ["test_catalog", "test_namespace", "test_table"],
+                "load_detailed_metadata": False,
+            }
+        )
+        response = namespace.describe_table(request)
+
+        self.assertEqual(response.location, "/data/lance/ns/table")
+
+    @patch("lance_namespace_impls.polaris.RestClient")
     def test_describe_table_not_lance(self, mock_rest_client_class):
         """Test describing a table that is not a Lance table."""
         mock_client = MagicMock()

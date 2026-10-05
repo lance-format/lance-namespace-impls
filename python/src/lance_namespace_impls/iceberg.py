@@ -483,6 +483,8 @@ class IcebergNamespace(LanceNamespace):
         The first element of request.id is the warehouse.
         Middle elements are the namespace, last element is the table name.
         """
+        if not isinstance(request, DescribeTableRequest):
+            request = DescribeTableRequest.from_dict(dict(request))
         if request.load_detailed_metadata:
             raise InvalidInputException(
                 "load_detailed_metadata=true is not supported for this implementation"

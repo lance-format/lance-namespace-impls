@@ -378,6 +378,8 @@ class Hive2Namespace(LanceNamespace):
 
         Only load_detailed_metadata=false is supported.
         """
+        if not isinstance(request, DescribeTableRequest):
+            request = DescribeTableRequest.from_dict(dict(request))
         if request.load_detailed_metadata:
             raise ValueError(
                 "load_detailed_metadata=true is not supported for this implementation"

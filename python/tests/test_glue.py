@@ -302,6 +302,29 @@ class TestGlueNamespace:
 
         assert response.location == "s3://bucket/table.lance"
 
+    def test_describe_table_accepts_dict_request(self, glue_namespace):
+        """pylance's Rust namespace bridge passes the request as a plain dict
+        (DictWithModelDump), not a DescribeTableRequest model. describe_table must
+        coerce it instead of raising AttributeError on attribute access. See #181."""
+        glue_namespace.glue.get_table.return_value = {
+            "Table": {
+                "Name": "test_table",
+                "Parameters": {"table_type": "LANCE"},
+                "StorageDescriptor": {"Location": "s3://bucket/table.lance"},
+            }
+        }
+
+        class DictWithModelDump(dict):
+            def model_dump(self):
+                return dict(self)
+
+        request = DictWithModelDump(
+            {"id": ["test_db", "test_table"], "load_detailed_metadata": False}
+        )
+        response = glue_namespace.describe_table(request)
+
+        assert response.location == "s3://bucket/table.lance"
+
     def test_describe_table_not_lance(self, glue_namespace):
         """Test describing a non-Lance table."""
         glue_namespace.glue.get_table.return_value = {

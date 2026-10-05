@@ -352,6 +352,8 @@ class GlueNamespace(LanceNamespace):
 
     def describe_table(self, request: DescribeTableRequest) -> DescribeTableResponse:
         """Describe a table."""
+        if not isinstance(request, DescribeTableRequest):
+            request = DescribeTableRequest.from_dict(dict(request))
         if request.load_detailed_metadata:
             raise RuntimeError(
                 "load_detailed_metadata=true is not supported for this implementation"
