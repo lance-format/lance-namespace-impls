@@ -37,7 +37,9 @@ import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
 import org.lance.namespace.model.NamespaceExistsRequest;
+import org.lance.namespace.model.NamespaceExistsResponse;
 import org.lance.namespace.model.TableExistsRequest;
+import org.lance.namespace.model.TableExistsResponse;
 import org.lance.namespace.rest.RestClient;
 import org.lance.namespace.rest.RestClientException;
 import org.lance.namespace.util.LanceTableUtil;
@@ -223,7 +225,7 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
   }
 
   @Override
-  public void namespaceExists(NamespaceExistsRequest request) {
+  public NamespaceExistsResponse namespaceExists(NamespaceExistsRequest request) {
     ObjectIdentifier namespaceId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
         namespaceId.levels() >= 2, "Namespace must have at least catalog and namespace levels");
@@ -236,6 +238,7 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
 
       restClient.get(
           "/v1/" + catalog + "/namespaces/" + namespacePath, PolarisModels.NamespaceResponse.class);
+      return new NamespaceExistsResponse();
     } catch (RestClientException e) {
       if (e.isNotFound()) {
         throw new NamespaceNotFoundException("Namespace not found: " + namespaceId.stringStyleId());
@@ -245,7 +248,7 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
   }
 
   @Override
-  public void tableExists(TableExistsRequest request) {
+  public TableExistsResponse tableExists(TableExistsRequest request) {
     ObjectIdentifier tableId = ObjectIdentifier.of(request.getId());
     ValidationUtil.checkArgument(
         tableId.levels() >= 3, "Table identifier must have catalog, namespace, and table name");
@@ -265,6 +268,7 @@ public class PolarisNamespace implements LanceNamespace, Closeable {
               + "/generic-tables/"
               + tableName,
           PolarisModels.LoadGenericTableResponse.class);
+      return new TableExistsResponse();
     } catch (RestClientException e) {
       if (e.isNotFound()) {
         throw new TableNotFoundException("Table not found: " + tableId.stringStyleId());
