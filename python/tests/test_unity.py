@@ -2,6 +2,7 @@
 Tests for Unity Catalog namespace implementation.
 """
 
+import json
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -330,6 +331,14 @@ class TestUnityNamespace(unittest.TestCase):
             response.location, "/data/lance/test_catalog/test_schema/test_table"
         )
 
+        create_table = mock_client.post.call_args.args[1]
+        placeholder_column = create_table.columns[0]
+        self.assertEqual(placeholder_column.name, "__placeholder_id")
+        self.assertEqual(
+            placeholder_column.type_json,
+            '{"name":"__placeholder_id","type":"long","nullable":true,"metadata":{}}',
+        )
+
     @patch("lance_namespace_impls.unity.RestClient")
     def test_describe_table(self, mock_rest_client_class):
         """Test describing a table."""
@@ -387,42 +396,60 @@ class TestUnityNamespace(unittest.TestCase):
             namespace._convert_arrow_type_to_unity_type(pa.timestamp("us")), "TIMESTAMP"
         )
 
-    def test_arrow_type_to_json_conversion(self):
-        """Test Arrow type to Unity JSON type conversion."""
+    def test_arrow_type_to_json_type_conversion(self):
+        """Test Arrow type to the type value used in Unity type JSON."""
         namespace = UnityNamespace(**self.properties)
 
         # Test various Arrow types
         self.assertEqual(
-            namespace._convert_arrow_type_to_unity_type_json(pa.string()),
-            '{"type":"string"}',
+            namespace._convert_arrow_type_to_unity_type_json_type(pa.string()),
+            "string",
         )
         self.assertEqual(
-            namespace._convert_arrow_type_to_unity_type_json(pa.int32()),
-            '{"type":"integer"}',
+            namespace._convert_arrow_type_to_unity_type_json_type(pa.int32()),
+            "integer",
         )
         self.assertEqual(
-            namespace._convert_arrow_type_to_unity_type_json(pa.int64()),
-            '{"type":"long"}',
+            namespace._convert_arrow_type_to_unity_type_json_type(pa.int64()),
+            "long",
         )
         self.assertEqual(
-            namespace._convert_arrow_type_to_unity_type_json(pa.float32()),
-            '{"type":"float"}',
+            namespace._convert_arrow_type_to_unity_type_json_type(pa.float32()),
+            "float",
         )
         self.assertEqual(
-            namespace._convert_arrow_type_to_unity_type_json(pa.float64()),
-            '{"type":"double"}',
+            namespace._convert_arrow_type_to_unity_type_json_type(pa.float64()),
+            "double",
         )
         self.assertEqual(
-            namespace._convert_arrow_type_to_unity_type_json(pa.bool_()),
-            '{"type":"boolean"}',
+            namespace._convert_arrow_type_to_unity_type_json_type(pa.bool_()),
+            "boolean",
         )
         self.assertEqual(
-            namespace._convert_arrow_type_to_unity_type_json(pa.date32()),
-            '{"type":"date"}',
+            namespace._convert_arrow_type_to_unity_type_json_type(pa.date32()),
+            "date",
         )
         self.assertEqual(
-            namespace._convert_arrow_type_to_unity_type_json(pa.timestamp("us")),
-            '{"type":"timestamp"}',
+            namespace._convert_arrow_type_to_unity_type_json_type(pa.timestamp("us")),
+            "timestamp",
+        )
+
+    def test_arrow_schema_uses_struct_field_type_json(self):
+        """Test Arrow fields use complete StructField JSON."""
+        namespace = UnityNamespace(**self.properties)
+        schema = pa.schema([pa.field('quoted"name', pa.string(), nullable=False)])
+
+        columns = namespace._convert_arrow_schema_to_unity_columns(schema)
+
+        self.assertEqual(len(columns), 1)
+        self.assertEqual(
+            json.loads(columns[0].type_json),
+            {
+                "name": 'quoted"name',
+                "type": "string",
+                "nullable": False,
+                "metadata": {},
+            },
         )
 
 

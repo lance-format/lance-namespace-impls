@@ -3,6 +3,7 @@ Unity Catalog namespace implementation for Lance.
 """
 
 import io
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -452,7 +453,9 @@ class UnityNamespace(LanceNamespace):
                 ColumnInfo(
                     name="__placeholder_id",
                     type_text="LONG",
-                    type_json='{"type":"long"}',
+                    type_json=self._create_unity_type_json(
+                        "__placeholder_id", "long", True
+                    ),
                     type_name="LONG",
                     position=0,
                     nullable=True,
@@ -651,8 +654,10 @@ class UnityNamespace(LanceNamespace):
         columns = []
         for i, arrow_field in enumerate(arrow_schema):
             unity_type = self._convert_arrow_type_to_unity_type(arrow_field.type)
-            unity_type_json = self._convert_arrow_type_to_unity_type_json(
-                arrow_field.type
+            unity_type_json = self._create_unity_type_json(
+                arrow_field.name,
+                self._convert_arrow_type_to_unity_type_json_type(arrow_field.type),
+                arrow_field.nullable,
             )
 
             column = ColumnInfo(
@@ -688,23 +693,39 @@ class UnityNamespace(LanceNamespace):
         else:
             return "STRING"
 
-    def _convert_arrow_type_to_unity_type_json(self, arrow_type: pa.DataType) -> str:
-        """Convert Arrow type to Unity type JSON string."""
+    def _convert_arrow_type_to_unity_type_json_type(
+        self, arrow_type: pa.DataType
+    ) -> str:
+        """Convert Arrow type to the type value used in Unity type JSON."""
         if pa.types.is_string(arrow_type) or pa.types.is_large_string(arrow_type):
-            return '{"type":"string"}'
+            return "string"
         elif pa.types.is_int32(arrow_type):
-            return '{"type":"integer"}'
+            return "integer"
         elif pa.types.is_int64(arrow_type):
-            return '{"type":"long"}'
+            return "long"
         elif pa.types.is_float32(arrow_type):
-            return '{"type":"float"}'
+            return "float"
         elif pa.types.is_float64(arrow_type):
-            return '{"type":"double"}'
+            return "double"
         elif pa.types.is_boolean(arrow_type):
-            return '{"type":"boolean"}'
+            return "boolean"
         elif pa.types.is_date(arrow_type):
-            return '{"type":"date"}'
+            return "date"
         elif pa.types.is_timestamp(arrow_type):
-            return '{"type":"timestamp"}'
+            return "timestamp"
         else:
-            return '{"type":"string"}'
+            return "string"
+
+    def _create_unity_type_json(
+        self, column_name: str, type_name: str, nullable: bool
+    ) -> str:
+        """Create Unity type JSON in Spark StructField format."""
+        return json.dumps(
+            {
+                "name": column_name,
+                "type": type_name,
+                "nullable": nullable,
+                "metadata": {},
+            },
+            separators=(",", ":"),
+        )
