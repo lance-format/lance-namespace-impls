@@ -341,7 +341,7 @@ public class UnityNamespace implements LanceNamespace, Closeable {
       idColumn.setName("__placeholder_id");
       idColumn.setTypeText("LONG");
       idColumn.setTypeName("LONG");
-      idColumn.setTypeJson("{\"type\":\"long\"}");
+      idColumn.setTypeJson(createUnityTypeJson(idColumn.getName(), "long", true));
       idColumn.setPosition(0);
       idColumn.setNullable(true);
       columns.add(idColumn);
@@ -497,7 +497,11 @@ public class UnityNamespace implements LanceNamespace, Closeable {
       columnInfo.setName(field.getName());
       String unityType = convertArrowTypeToUnityType(field.getType());
       columnInfo.setTypeText(unityType);
-      columnInfo.setTypeJson(convertArrowTypeToUnityTypeJson(field.getType()));
+      columnInfo.setTypeJson(
+          createUnityTypeJson(
+              field.getName(),
+              convertArrowTypeToUnityTypeJsonType(field.getType()),
+              field.isNullable()));
       columnInfo.setTypeName(unityType);
       columnInfo.setPosition(columns.size());
       columnInfo.setNullable(field.isNullable());
@@ -533,30 +537,44 @@ public class UnityNamespace implements LanceNamespace, Closeable {
     return "STRING";
   }
 
-  private String convertArrowTypeToUnityTypeJson(ArrowType arrowType) {
+  private String convertArrowTypeToUnityTypeJsonType(ArrowType arrowType) {
     if (arrowType instanceof ArrowType.Utf8) {
-      return "{\"type\":\"string\"}";
+      return "string";
     } else if (arrowType instanceof ArrowType.Int) {
       ArrowType.Int intType = (ArrowType.Int) arrowType;
       if (intType.getBitWidth() == 32) {
-        return "{\"type\":\"integer\"}";
+        return "integer";
       } else if (intType.getBitWidth() == 64) {
-        return "{\"type\":\"long\"}";
+        return "long";
       }
     } else if (arrowType instanceof ArrowType.FloatingPoint) {
       ArrowType.FloatingPoint fpType = (ArrowType.FloatingPoint) arrowType;
       if (fpType.getPrecision() == FloatingPointPrecision.SINGLE) {
-        return "{\"type\":\"float\"}";
+        return "float";
       } else if (fpType.getPrecision() == FloatingPointPrecision.DOUBLE) {
-        return "{\"type\":\"double\"}";
+        return "double";
       }
     } else if (arrowType instanceof ArrowType.Bool) {
-      return "{\"type\":\"boolean\"}";
+      return "boolean";
     } else if (arrowType instanceof ArrowType.Date) {
-      return "{\"type\":\"date\"}";
+      return "date";
     } else if (arrowType instanceof ArrowType.Timestamp) {
-      return "{\"type\":\"timestamp\"}";
+      return "timestamp";
     }
-    return "{\"type\":\"string\"}";
+    return "string";
+  }
+
+  private String createUnityTypeJson(String columnName, String typeName, boolean nullable) {
+    return "{\"name\":\""
+        + escapeJsonString(columnName)
+        + "\",\"type\":\""
+        + typeName
+        + "\",\"nullable\":"
+        + nullable
+        + ",\"metadata\":{}}";
+  }
+
+  private String escapeJsonString(String value) {
+    return value.replace("\\", "\\\\").replace("\"", "\\\"");
   }
 }
